@@ -54,6 +54,30 @@ class Task(Base):
         return json.loads(self.sentences) if self.sentences else []
 
 
+class YouTubeTask(Base):
+    """YouTube 字幕同步任務模型"""
+    __tablename__ = "youtube_tasks"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    video_id = Column(String(20), nullable=False)
+    video_title = Column(String(500), nullable=True)
+    status = Column(String(20), default="pending")
+    model = Column(String(100), nullable=False)
+    language = Column(String(50), nullable=False)
+    progress = Column(Float, default=0.0)
+    progress_message = Column(String(255), default="等待中")
+    sentences = Column(Text, nullable=True)         # JSON string
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime, nullable=True)
+
+    def set_sentences(self, data):
+        self.sentences = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_sentences(self):
+        return json.loads(self.sentences) if self.sentences else []
+
+
 def get_db():
     """FastAPI dependency — 取得 DB session"""
     db = SessionLocal()

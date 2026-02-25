@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import init_db
 from backend.routers.tasks import router as tasks_router
+from backend.routers.youtube import router as youtube_router
 
 app = FastAPI(
     title="Qwen ASR API",
@@ -25,6 +26,7 @@ app.add_middleware(
 
 # ── 路由掛載 ──
 app.include_router(tasks_router)
+app.include_router(youtube_router)
 
 
 @app.on_event("startup")

@@ -26,5 +26,8 @@ uvicorn[standard]
 sqlalchemy
 python-multipart
 
+# YouTube 音頻下載
+yt-dlp
+
 # 環境變數
 python-dotenv

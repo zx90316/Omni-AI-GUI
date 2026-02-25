@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import TaskList from './pages/TaskList.jsx'
 import NewTask from './pages/NewTask.jsx'
 import TaskDetail from './pages/TaskDetail.jsx'
+import SubSync from './pages/SubSync.jsx'
 
 function Layout({ children }) {
     return (
@@ -27,6 +28,13 @@ function Layout({ children }) {
                         <span className="icon">➕</span>
                         新增任務
                     </NavLink>
+                    <NavLink
+                        to="/subsync"
+                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    >
+                        <span className="icon">🎬</span>
+                        SubSync
+                    </NavLink>
                 </nav>
             </aside>
             <main className="main-content">
@@ -44,6 +52,7 @@ export default function App() {
                     <Route path="/" element={<TaskList />} />
                     <Route path="/new" element={<NewTask />} />
                     <Route path="/tasks/:id" element={<TaskDetail />} />
+                    <Route path="/subsync" element={<SubSync />} />
                 </Routes>
             </Layout>
         </BrowserRouter>

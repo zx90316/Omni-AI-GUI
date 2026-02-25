@@ -52,3 +52,34 @@ class ConfigResponse(BaseModel):
     models: dict
     languages: dict
     device: dict
+
+
+# ── YouTube SubSync ──
+
+class YouTubeAnalyzeRequest(BaseModel):
+    url: str
+    model: str = "1.7B (高品質)"
+    language: str = "中文"
+
+
+class YouTubeTaskResponse(BaseModel):
+    id: int
+    video_id: str
+    video_title: Optional[str] = None
+    status: str
+    model: str
+    language: str
+    progress: float
+    progress_message: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class YouTubeTaskDetailResponse(YouTubeTaskResponse):
+    """含完整字幕結果"""
+    sentences: Optional[List[Any]] = None
+
+    model_config = {"from_attributes": True}

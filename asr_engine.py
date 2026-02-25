@@ -354,10 +354,8 @@ class ASREngine:
         self._progress(80, "合併 ASR 與語者分離結果...")
 
         if not diar_segments:
-            text = "".join(r.text for r in asr_results)
-            if to_traditional:
-                text = cc.convert(text)
-            return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+            # Inject a dummy speaker segment so timestamp extraction still runs
+            diar_segments = [{"start": 0.0, "end": 999999.0, "speaker": "UNKNOWN"}]
 
         # Step 1: 取出所有字元時間戳，並從原文還原標點符號
         chars = []
@@ -423,7 +421,7 @@ class ASREngine:
         if not chars:
             text = "".join(r.text for r in asr_results)
             if to_traditional:
-                text = cc.convert(text)
+                text = _get_cc().convert(text)
             return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
         # Step 2: 將字元切分為句子（以標點為斷點）

@@ -18,3 +18,4 @@ build/
 .vscode/
 .idea/
 frontend/node_modules
+ffmpeg-master-latest-win64-gpl-shared

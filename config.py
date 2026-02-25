@@ -20,6 +20,9 @@ RESULT_DIR.mkdir(exist_ok=True)
 # 音訊處理
 AUDIO_SAMPLE_RATE = 16000
 
+# FFmpeg 路徑（yt-dlp 音頻轉檔用）
+FFMPEG_DIR = str(BASE_DIR / "ffmpeg-master-latest-win64-gpl-shared" / "bin")
+
 # ASR 模型配置
 MODELS = {
     "1.7B (高品質)": "Qwen/Qwen3-ASR-1.7B",
