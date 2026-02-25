@@ -77,34 +77,55 @@ class LLMManager:
         else:
             return "請處理以下文字。"
 
-    def process_sentence(self, text: str, provider: str, model: str, action: str, custom_prompt: str = "") -> str:
-        """處理單一句句話 (潤飾或翻譯)"""
+    def process_sentence(self, text: str, provider: str, model: str, action: str, custom_prompt: str = "",
+                         prev_text: str = "", next_text: str = "", temperature: float = 0.3, max_tokens: int = 1024, thinking_level: str = "medium") -> str:
+        """處理單一句句話 (潤飾或翻譯)，支援上下文與自訂參數"""
         if not text.strip():
             return text
 
         system_prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else self.build_system_prompt(action)
 
+        # 組合包含上下文的 Prompt
+        context_msg = ""
+        if prev_text or next_text:
+            context_msg += "【上下文參考】\n"
+            if prev_text:
+                context_msg += f"前一句: {prev_text}\n"
+            if next_text:
+                context_msg += f"後一句: {next_text}\n"
+            context_msg += "\n"
+        
+        user_message = f"{context_msg}【請處理以下當前句子】\n{text}"
+
         if provider == "Ollama":
-            return self._process_ollama(text, model, system_prompt)
+            return self._process_ollama(user_message, model, system_prompt, temperature, max_tokens, thinking_level)
         elif provider == "OpenAI":
-            return self._process_openai(text, model, system_prompt)
+            return self._process_openai(user_message, model, system_prompt, temperature, max_tokens, thinking_level)
         elif provider == "Gemini":
-            return self._process_gemini(text, model, system_prompt)
+            return self._process_gemini(user_message, model, system_prompt, temperature, max_tokens)
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
-    def _process_ollama(self, text: str, model: str, system_prompt: str) -> str:
+    def _process_ollama(self, text: str, model: str, system_prompt: str, temperature: float, max_tokens: int, thinking_level: str) -> str:
         url = f"{self.ollama_host}/api/chat"
+        # 針對支援思考等級的模型，有些可能需要額外參數，先保留 num_predict 和 temperature
+        options = {
+            "temperature": temperature,
+            "num_predict": max_tokens
+        }
+        # 如果模型支援，可在此處轉換 thinking_level 對應的額外參數
+        
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text}
             ],
+            "options": options,
             "stream": False
         }
         try:
-            resp = requests.post(url, json=payload, timeout=30)
+            resp = requests.post(url, json=payload, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             return data.get('message', {}).get('content', '').strip()
@@ -112,24 +133,36 @@ class LLMManager:
             print(f"Ollama API Error: {e}")
             return text
 
-    def _process_openai(self, text: str, model: str, system_prompt: str) -> str:
+    def _process_openai(self, text: str, model: str, system_prompt: str, temperature: float, max_tokens: int, thinking_level: str) -> str:
         if not self.openai_client:
             raise ValueError("OpenAI client not initialized.")
+        
+        kwargs = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+        }
+        
+        # 針對 o1 / o3 系列模型處理 (不支援 temperature 且 max_tokens 參數不同)
+        if model.startswith("o1") or model.startswith("o3"):
+            kwargs["max_completion_tokens"] = max_tokens
+            kwargs["reasoning_effort"] = thinking_level
+            # o1 模型通常沒有 system role，需轉換為 user, 或保留依 API 版本而定
+            # 最新 API 已支援 o1 的 system/developer role
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["max_tokens"] = max_tokens
+            
         try:
-            response = self.openai_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.3
-            )
+            response = self.openai_client.chat.completions.create(**kwargs)
             return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"OpenAI API Error: {e}")
             return text
 
-    def _process_gemini(self, text: str, model: str, system_prompt: str) -> str:
+    def _process_gemini(self, text: str, model: str, system_prompt: str, temperature: float, max_tokens: int) -> str:
         if not self.gemini_client:
             raise ValueError("Gemini client is not configured.")
         try:
@@ -138,7 +171,8 @@ class LLMManager:
                 contents=text,
                 config=genai.types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    temperature=0.3,
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
                 ),
             )
             return response.text.strip()

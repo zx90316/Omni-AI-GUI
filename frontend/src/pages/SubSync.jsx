@@ -92,6 +92,10 @@ export default function SubSync() {
     const [editingIndex, setEditingIndex] = useState(-1)
     const [editValue, setEditValue] = useState('')
 
+    const [temperature, setTemperature] = useState(0.3)
+    const [maxTokens, setMaxTokens] = useState(1024)
+    const [thinkingLevel, setThinkingLevel] = useState('medium')
+
     const playerRef = useRef(null)
     const playerContainerRef = useRef(null)
     const timerRef = useRef(null)
@@ -435,7 +439,10 @@ export default function SubSync() {
                     provider: llmProvider,
                     model: llmModel,
                     action: llmAction,
-                    custom_prompt: showCustomPrompt ? llmCustomPrompt : ""
+                    custom_prompt: showCustomPrompt ? llmCustomPrompt : "",
+                    temperature: parseFloat(temperature),
+                    max_tokens: parseInt(maxTokens, 10),
+                    thinking_level: thinkingLevel
                 })
             })
 
@@ -871,6 +878,25 @@ export default function SubSync() {
                                                 ✍️ 自訂
                                             </button>
                                         </div>
+                                    </div>
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }} title="數值越高越有創意 (0.0~2.0)">溫度</label>
+                                        <input type="number" step="0.1" min="0" max="2" className="form-input" style={{ width: '60px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                            value={temperature} onChange={e => setTemperature(e.target.value)} />
+                                    </div>
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }} title="長度限制或思考長度">最大輸出</label>
+                                        <input type="number" step="100" min="10" className="form-input" style={{ width: '70px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                            value={maxTokens} onChange={e => setMaxTokens(e.target.value)} />
+                                    </div>
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }} title="支援思考等級之模型 (如 o1) 或傳給 Ollama 做參考">思考等級</label>
+                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                            value={thinkingLevel} onChange={e => setThinkingLevel(e.target.value)}>
+                                            <option value="low">低</option>
+                                            <option value="medium">中</option>
+                                            <option value="high">高</option>
+                                        </select>
                                     </div>
                                     <div className="subsync-llm-actions">
                                         <button className="btn btn-accent btn-sm"

@@ -18,6 +18,10 @@ class ProcessRequest(BaseModel):
     model: str
     action: str  # "polish" or "translate"
     custom_prompt: Optional[str] = ""
+    temperature: float = 0.3
+    max_tokens: int = 1024
+    thinking_level: str = "medium"  # "low", "medium", "high" (for O1/O3 reasoning models, or mapped to some internal params for Ollama if needed)
+
 
 class CancelRequest(BaseModel):
     task_id: int
@@ -68,13 +72,27 @@ async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
             if "original_text" not in sentence:
                 sentence["original_text"] = sentence.get("text", "")
 
+            # 取得前後句作為上下文
+            prev_text = sentences[i - 1].get("text", "") if i > 0 else ""
+            next_text = sentences[i + 1].get("text", "") if i < len(sentences) - 1 else ""
+
             # 我們可以選擇拿 "翻譯/潤飾" 過的最新文字繼續做，或是拿原始文字做。這裡通常拿最新的 text 做處理
             current_text = sentence.get("text", "")
             
             # 使用 LLM 處理 (這是 blocking call)
             try:
                 processed_text = await asyncio.to_thread(
-                    llm_manager.process_sentence, current_text, req.provider, req.model, req.action, req.custom_prompt
+                    llm_manager.process_sentence, 
+                    current_text, 
+                    req.provider, 
+                    req.model, 
+                    req.action, 
+                    req.custom_prompt,
+                    prev_text,
+                    next_text,
+                    req.temperature,
+                    req.max_tokens,
+                    req.thinking_level
                 )
             except Exception as e:
                 processed_text = current_text # 發生錯誤則保留原句
