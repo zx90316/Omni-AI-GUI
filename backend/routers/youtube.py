@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from backend.database import YouTubeTask, get_db
@@ -22,6 +22,8 @@ from backend.schemas import (
 )
 
 import sys, os
+import uuid
+import shutil
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE, FFMPEG_DIR
 from asr_engine import ASREngine
@@ -159,6 +161,73 @@ def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db)):
     return task
 
 
+@router.post("/analyze/upload", response_model=YouTubeTaskResponse, status_code=201)
+async def analyze_youtube_upload(
+    file: UploadFile = File(...),
+    model: str = Form(DEFAULT_MODEL),
+    language: str = Form(DEFAULT_LANGUAGE),
+    db: Session = Depends(get_db)
+):
+    """上傳本地影音檔案進行 ASR 字幕分析"""
+    
+    # 驗證模型和語言
+    if model not in MODELS:
+        raise HTTPException(status_code=400, detail=f"不支援的模型: {model}")
+    if language not in LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
+
+    # Generate a local video id
+    video_id = f"local_{uuid.uuid4().hex[:11]}"
+    safe_name = file.filename.replace("/", "_").replace("\\", "_")
+    
+    # Save the file locally
+    # We will use the original extension for playback compatibility
+    ext = os.path.splitext(safe_name)[1]
+    save_path = TEMP_DIR / f"{video_id}{ext}"
+    
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # 建立任務
+    task = YouTubeTask(
+        video_id=video_id,
+        video_title=file.filename,
+        status="pending",
+        model=model,
+        language=language,
+        progress=0.0,
+        progress_message="等待中",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # 啟動背景處理
+    task_id = task.id
+    threading.Thread(
+        target=_run_youtube_task,
+        args=(task_id, video_id, model, language),
+        daemon=True,
+    ).start()
+
+    return task
+
+
+@router.get("/media/{video_id}")
+def get_youtube_media(video_id: str):
+    """取得上傳的本地影音檔案"""
+    if not video_id.startswith("local_"):
+        raise HTTPException(status_code=400, detail="僅支援本地上傳檔案")
+    
+    # Find the file with any extension matching the video_id
+    for file_path in TEMP_DIR.glob(f"{video_id}.*"):
+        if file_path.is_file():
+            # stream the file with FileResponse allowing bytes range request
+            return FileResponse(file_path)
+            
+    raise HTTPException(status_code=404, detail="找不到媒體檔案")
+
+
 @router.get("/{task_id}", response_model=YouTubeTaskDetailResponse)
 def get_youtube_task(task_id: int, db: Session = Depends(get_db)):
     """查詢 YouTube 字幕任務詳情"""
@@ -188,6 +257,14 @@ def delete_youtube_task(task_id: int, db: Session = Depends(get_db)):
     task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
+
+    # If it's a local file, delete it from storage
+    if task.video_id and task.video_id.startswith("local_"):
+        for file_path in TEMP_DIR.glob(f"{task.video_id}.*"):
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Error deleting local media {file_path}: {e}")
 
     db.delete(task)
     db.commit()
@@ -307,14 +384,30 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
             task.progress_message = message
             db.commit()
 
-        # ── 1. 下載音頻 ──
-        on_progress(1, "正在下載 YouTube 音頻...")
-        audio_info = download_audio(video_id, TEMP_DIR, on_progress=on_progress)
+        # ── 1. 下載或取得音頻 ──
+        is_local = video_id.startswith("local_")
+        
+        if is_local:
+            on_progress(10, "正在分析本地媒體檔案...")
+            # Find the local audio/video file
+            audio_path = None
+            for file_path in TEMP_DIR.glob(f"{video_id}.*"):
+                if file_path.is_file() and file_path.suffix != ".wav": # don't pick up generated wav if exists
+                    audio_path = str(file_path)
+                    break
+            
+            if not audio_path:
+                raise Exception("找不到上傳的媒體檔案")
+            
+            # Use original file for ASR, model can usually handle common video/audio formats directly via ffmpeg inside funasr
+        else:
+            on_progress(1, "正在下載 YouTube 音頻...")
+            audio_info = download_audio(video_id, TEMP_DIR, on_progress=on_progress)
 
-        task.video_title = audio_info["title"]
-        db.commit()
+            task.video_title = audio_info["title"]
+            db.commit()
 
-        audio_path = audio_info["audio_path"]
+            audio_path = audio_info["audio_path"]
 
         # ── 2. ASR 轉錄 ──
         model_name = MODELS[model_key]
@@ -350,7 +443,8 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
 
         # 清理暫存音頻
         try:
-            Path(audio_path).unlink(missing_ok=True)
+            if not is_local and Path(audio_path).exists():
+                Path(audio_path).unlink(missing_ok=True)
         except Exception:
             pass
 

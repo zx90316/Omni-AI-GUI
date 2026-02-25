@@ -61,7 +61,9 @@ function formatTime(seconds) {
 
 export default function SubSync() {
     // ── 狀態 ──
+    const [inputType, setInputType] = useState('youtube') // 'youtube' | 'local'
     const [url, setUrl] = useState('')
+    const [file, setFile] = useState(null)
     const [model, setModel] = useState('1.7B (高品質)')
     const [language, setLanguage] = useState('中文')
     const [config, setConfig] = useState(null)
@@ -185,18 +187,34 @@ export default function SubSync() {
 
     // ── 提交分析 ──
     const handleSubmit = async () => {
-        if (!url.trim()) return
+        if (inputType === 'youtube' && !url.trim()) return
+        if (inputType === 'local' && !file) return
+
         setError('')
         setPhase('processing')
         setProgress(0)
         setProgressMessage('提交中...')
 
         try {
-            const resp = await fetch('/api/youtube/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, model, language }),
-            })
+            let resp
+            if (inputType === 'youtube') {
+                resp = await fetch('/api/youtube/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, model, language }),
+                })
+            } else {
+                const formData = new FormData()
+                formData.append('file', file)
+                formData.append('model', model)
+                formData.append('language', language)
+
+                resp = await fetch('/api/youtube/analyze/upload', {
+                    method: 'POST',
+                    body: formData,
+                })
+            }
+
             if (!resp.ok) {
                 const err = await resp.json()
                 throw new Error(err.detail || '提交失敗')
@@ -272,6 +290,43 @@ export default function SubSync() {
 
     // ── 初始化 YouTube Player ──
     const initPlayer = async (vid) => {
+        if (vid.startsWith('local_')) {
+            // Local video/audio rendering
+            if (playerContainerRef.current) {
+                playerContainerRef.current.innerHTML = ''
+                const videoEl = document.createElement('video')
+                videoEl.controls = true
+                videoEl.style.width = '100%'
+                videoEl.style.height = '100%'
+                videoEl.style.backgroundColor = '#000'
+                videoEl.src = `/api/youtube/media/${vid}`
+
+                playerRef.current = {
+                    getCurrentTime: () => videoEl.currentTime,
+                    seekTo: (time) => { videoEl.currentTime = time },
+                    destroy: () => {
+                        videoEl.pause()
+                        videoEl.src = ''
+                    },
+                    isLocal: true
+                }
+
+                videoEl.addEventListener('play', startTimeSync)
+                videoEl.addEventListener('pause', () => {
+                    stopTimeSync()
+                    syncSubtitle()
+                })
+                videoEl.addEventListener('ended', () => {
+                    stopTimeSync()
+                    syncSubtitle()
+                })
+
+                playerContainerRef.current.appendChild(videoEl)
+                videoEl.load()
+            }
+            return
+        }
+
         await loadYouTubeAPI()
 
         if (playerRef.current) {
@@ -344,8 +399,14 @@ export default function SubSync() {
             try { playerRef.current.destroy() } catch { }
             playerRef.current = null
         }
+        if (playerContainerRef.current && !history.some(h => h.video_id === videoId && h.video_id.startsWith('local_'))) {
+            playerContainerRef.current.innerHTML = '<div id="yt-player"></div>'
+        } else if (playerContainerRef.current) {
+            playerContainerRef.current.innerHTML = '<div id="yt-player"></div>'
+        }
         setPhase('input')
         setUrl('')
+        setFile(null)
         setTaskId(null)
         setVideoId(null)
         setVideoTitle('')
@@ -537,28 +598,54 @@ export default function SubSync() {
             {phase === 'input' && (
                 <div className="card subsync-input-card fade-in">
                     <div className="subsync-input-header">
-                        <div className="subsync-input-icon">📺</div>
+                        <div className="subsync-input-icon">🎬</div>
                         <div>
-                            <h3>輸入 YouTube 影片網址</h3>
-                            <p className="text-muted">支援 youtube.com/watch、youtu.be、shorts 等格式</p>
+                            <h3>匯入影音</h3>
+                            <p className="text-muted">支援 YouTube 網址或上傳本地影音檔案</p>
                         </div>
                     </div>
 
+                    <div className="subsync-input-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '1rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '8px' }}>
+                        <button
+                            className={`btn btn-sm ${inputType === 'youtube' ? 'btn-primary' : 'btn-ghost'}`}
+                            onClick={() => setInputType('youtube')}
+                        >
+                            🔗 YouTube 網址
+                        </button>
+                        <button
+                            className={`btn btn-sm ${inputType === 'local' ? 'btn-primary' : 'btn-ghost'}`}
+                            onClick={() => setInputType('local')}
+                        >
+                            📁 上傳影音檔案
+                        </button>
+                    </div>
+
                     <div className="subsync-url-row">
-                        <input
-                            id="youtube-url-input"
-                            type="text"
-                            className="form-input subsync-url-input"
-                            placeholder="https://www.youtube.com/watch?v=..."
-                            value={url}
-                            onChange={e => setUrl(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                        />
+                        {inputType === 'youtube' ? (
+                            <input
+                                id="youtube-url-input"
+                                type="text"
+                                className="form-input subsync-url-input"
+                                placeholder="https://www.youtube.com/watch?v=..."
+                                value={url}
+                                onChange={e => setUrl(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                            />
+                        ) : (
+                            <input
+                                id="local-file-input"
+                                type="file"
+                                className="form-input subsync-url-input"
+                                accept="audio/*,video/*"
+                                onChange={e => setFile(e.target.files[0])}
+                                style={{ padding: '8px' }}
+                            />
+                        )}
                         <button
                             id="subsync-start-btn"
                             className="btn btn-accent btn-lg"
                             onClick={handleSubmit}
-                            disabled={!url.trim()}
+                            disabled={inputType === 'youtube' ? !url.trim() : !file}
                         >
                             🚀 開始分析
                         </button>
