@@ -22,12 +22,12 @@ from backend.schemas import (
 )
 from backend.auth_utils import get_current_user
 
-import sys, os
+import os
 import uuid
 import shutil
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE, FFMPEG_DIR
-from asr_engine import ASREngine
+
+from backend.config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE, FFMPEG_DIR
+from backend.asr_engine import ASREngine
 
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
 

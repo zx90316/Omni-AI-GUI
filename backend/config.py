@@ -12,8 +12,8 @@ load_dotenv()
 # HuggingFace Token（從 .env 或環境變數讀取）
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
-# 路徑配置
-BASE_DIR = Path(__file__).parent
+# 路徑配置（此檔案位於 backend/，BASE_DIR 指向專案根目錄）
+BASE_DIR = Path(__file__).parent.parent
 RESULT_DIR = BASE_DIR / "results"
 RESULT_DIR.mkdir(exist_ok=True)
 

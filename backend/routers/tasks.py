@@ -18,10 +18,8 @@ from backend.database import Task, get_db, init_db
 from backend.schemas import TaskResponse, TaskDetailResponse, ConfigResponse
 from backend.auth_utils import get_current_user
 
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE
-from asr_engine import ASREngine, detect_device
+from backend.config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE
+from backend.asr_engine import ASREngine, detect_device
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 

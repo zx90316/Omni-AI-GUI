@@ -88,7 +88,7 @@ class ASREngine:
             return
 
         from qwen_asr import Qwen3ASRModel
-        from config import FORCED_ALIGNER
+        from backend.config import FORCED_ALIGNER
 
         self._progress(5, f"載入模型 {self.model_name}...")
         self._model = Qwen3ASRModel.from_pretrained(
@@ -130,7 +130,7 @@ class ASREngine:
         """依靜音段切分音訊，回傳各段 (start_sec, end_sec) 清單"""
         import numpy as np
         import soundfile as sf
-        from audio_utils import get_audio_duration
+        from backend.audio_utils import get_audio_duration
 
         total_duration = get_audio_duration(audio_path)
 
@@ -244,7 +244,7 @@ class ASREngine:
             ASR 結果列表（時間戳已偏移修正）
         """
         import soundfile as sf
-        from audio_utils import get_audio_duration
+        from backend.audio_utils import get_audio_duration
 
         total_duration = get_audio_duration(str(audio_path))
 
@@ -315,8 +315,8 @@ class ASREngine:
 
         import torch
         from pyannote.audio import Pipeline
-        from audio_utils import load_audio
-        from config import DIARIZATION_MODEL, HF_TOKEN
+        from backend.audio_utils import load_audio
+        from backend.config import DIARIZATION_MODEL, HF_TOKEN
 
         pipeline = Pipeline.from_pretrained(
             DIARIZATION_MODEL,
@@ -742,8 +742,8 @@ class ASREngine:
             }
         """
         try:
-            from audio_utils import convert_to_wav
-            from config import RESULT_DIR
+            from backend.audio_utils import convert_to_wav
+            from backend.config import RESULT_DIR
 
             # Step 1: 轉換為 WAV
             self._progress(0, "轉換音訊格式...")

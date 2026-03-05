@@ -10,7 +10,7 @@ import av
 from pathlib import Path
 from typing import Tuple, Optional
 
-from config import AUDIO_SAMPLE_RATE
+from backend.config import AUDIO_SAMPLE_RATE
 
 
 # ============================================

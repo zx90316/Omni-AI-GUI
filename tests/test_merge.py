@@ -2,7 +2,7 @@
 """測試句子級別語者分派邏輯"""
 import sys
 sys.path.insert(0, ".")
-from asr_engine import ASREngine
+from backend.asr_engine import ASREngine
 
 engine = ASREngine.__new__(ASREngine)
 engine.on_progress = lambda p, m: None

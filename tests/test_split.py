@@ -2,7 +2,7 @@
 """測試 split_sentences 分句邏輯"""
 import sys
 sys.path.insert(0, ".")
-from asr_engine import ASREngine
+from backend.asr_engine import ASREngine
 
 segments = [{
     "start": 0.0,
