@@ -230,7 +230,7 @@ class ASREngine:
         self,
         audio_path: str,
         language: str = "Chinese",
-        target_duration: float = 120.0,
+        target_duration: float = 60.0,
     ) -> list:
         """
         ASR 轉錄（自動處理長音訊分段）
@@ -338,6 +338,14 @@ class ASREngine:
                 "end": turn.end,
                 "speaker": speaker,
             })
+
+        if torch.cuda.is_available():
+            pipeline.to(torch.device("cpu"))
+
+        # 釋放語者分離模型，騰出 VRAM
+        del pipeline
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         self._progress(78, f"語者分離完成，{len(diar_segments)} 個區段")
         return diar_segments
@@ -761,6 +769,9 @@ class ASREngine:
             self.load_model()
             asr_results = self.transcribe(str(wav_path), language=language)
 
+            # 轉錄完成後立即卸載 ASR 模型，騰出 VRAM
+            self.unload_model()
+
             # 取得原始 ASR 全文
             raw_text = "".join(r.text for r in asr_results)
             if to_traditional:
@@ -801,6 +812,7 @@ class ASREngine:
             }
 
         finally:
+            # 確保模型被釋放（即使上方已卸載，unload_model 內有 None 檢查不會重複操作）
             self.unload_model()
             self._progress(100, "完成")
 

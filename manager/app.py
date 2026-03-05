@@ -79,7 +79,7 @@ class ManagerApp:
         self.root = ttk.Window(
             title="Qwen-ASR-GUI Manager",
             themename=self.config.get("theme", "darkly"),
-            size=(1100, 780),
+            size=(1100, 980),
             minsize=(900, 600),
         )
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
