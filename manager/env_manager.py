@@ -112,8 +112,16 @@ def create_venv(on_output: Callable[[str], None] | None = None) -> bool:
     if on_output:
         on_output("🔧 正在建立虛擬環境 .venv ...")
 
-    # 使用當前系統 Python 建立 venv
-    python_exe = sys.executable
+    # 使用當前系統 Python 建立 venv (如果是 EXE，則尋找系統 python)
+    if getattr(sys, 'frozen', False):
+        import shutil
+        python_exe = shutil.which("python") or shutil.which("python3") or shutil.which("py")
+        if not python_exe:
+            if on_output:
+                on_output("❌ 找不到系統 Python，請確認已安裝 Python 並加入 PATH")
+            return False
+    else:
+        python_exe = sys.executable
     success, _ = _run_command(
         [python_exe, "-m", "venv", str(PROJECT_ROOT / ".venv")],
         on_output=on_output,
