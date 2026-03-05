@@ -96,8 +96,8 @@ def auto_clone_setup():
                 pass
                 
             subprocess.check_call(["git", "fetch", "--all"], cwd=str(current_dir), creationflags=creationflags)
-            subprocess.check_call(["git", "reset", "--hard", "origin/main"], cwd=str(current_dir), creationflags=creationflags)
-            subprocess.check_call(["git", "branch", "--set-upstream-to=origin/main", "main"], cwd=str(current_dir), creationflags=creationflags)
+            subprocess.check_call(["git", "reset", "--hard", "origin/master"], cwd=str(current_dir), creationflags=creationflags)
+            subprocess.check_call(["git", "branch", "--set-upstream-to=origin/master", "master"], cwd=str(current_dir), creationflags=creationflags)
 
             # 提示成功並在當前目錄重啟
             messagebox.showinfo(
