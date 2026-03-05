@@ -42,14 +42,26 @@ class LLMManager:
 
         # 2. OpenAI
         if self.openai_client:
-            providers['OpenAI'] = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-            # To fetch dynamically, could use self.openai_client.models.list() but usually it's better to offer common ones.
+            try:
+                models = self.openai_client.models.list()
+                # 過濾出常見的 GPT 模型
+                gpt_models = sorted([m.id for m in models.data if "gpt" in m.id])
+                if gpt_models:
+                    providers['OpenAI'] = gpt_models
+            except Exception:
+                pass
 
         # 3. Gemini
         if self.gemini_client:
-            # google-genai doesn't easily return a clean list of just text models immediately without filtering thoroughly, 
-            # so providing the common ones is better, or we can use standard known names
-            providers['Gemini'] = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+            try:
+                # 使用 google-genai SDK 獲取模型列表
+                models = self.gemini_client.models.list()
+                # 過濾出 gemini 系列模型並移除 'models/' 前綴
+                gemini_models = sorted([m.name.split('/')[-1] for m in models if "gemini" in m.name])
+                if gemini_models:
+                    providers['Gemini'] = gemini_models
+            except Exception:
+                pass
 
         return providers
 
