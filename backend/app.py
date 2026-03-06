@@ -12,6 +12,7 @@ from backend.routers.llm import router as llm_router
 from backend.routers.auth import router as auth_router
 from backend.routers.ocr import router as ocr_router
 from backend.routers.clip_search import router as clip_search_router
+from backend.routers.workflow import router as workflow_router
 
 app = FastAPI(
     title="Qwen ASR API",
@@ -35,6 +36,7 @@ app.include_router(llm_router)
 app.include_router(auth_router)
 app.include_router(ocr_router)
 app.include_router(clip_search_router)
+app.include_router(workflow_router)
 
 
 @app.on_event("startup")

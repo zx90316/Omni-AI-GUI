@@ -110,7 +110,7 @@ export default function OCR() {
                 setError('請至少輸入一個欄位名稱')
                 return
             }
-            validFields.forEach(f => { fieldsDict[f.key.trim()] = f.value })
+            validFields.forEach(f => { fieldsDict[f.key.trim()] = '' })
         }
 
         setProcessing(true)
@@ -318,7 +318,7 @@ export default function OCR() {
                                         </button>
                                     </div>
                                 </div>
-                                <p className="ocr-fields-hint">定義要從圖片中擷取的欄位名稱與預設值（預設值可留空）</p>
+                                <p className="ocr-fields-hint">定義要從圖片中擷取的欄位名稱</p>
 
                                 <div className="ocr-fields-list">
                                     {fields.map((field, index) => (
@@ -329,13 +329,6 @@ export default function OCR() {
                                                 placeholder="欄位名稱"
                                                 value={field.key}
                                                 onChange={e => updateField(index, 'key', e.target.value)}
-                                            />
-                                            <input
-                                                type="text"
-                                                className="form-input ocr-field-value"
-                                                placeholder="預設值（選填）"
-                                                value={field.value}
-                                                onChange={e => updateField(index, 'value', e.target.value)}
                                             />
                                             <button
                                                 className="btn btn-outline btn-sm ocr-field-remove"

@@ -5,6 +5,7 @@ import TaskDetail from './pages/TaskDetail.jsx'
 import SubSync from './pages/SubSync.jsx'
 import OCR from './pages/OCR.jsx'
 import ClipSearch from './pages/ClipSearch.jsx'
+import ClipOcrWorkflow from './pages/ClipOcrWorkflow.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -27,7 +28,7 @@ function Layout({ children }) {
                 )}
                 <nav className="sidebar-nav">
                     <div className="nav-group">
-                        <div className="nav-group-label">語音工坊 🎙</div>
+                        <div className="nav-group-label">語音工坊</div>
                         <NavLink
                             to="/"
                             end
@@ -53,7 +54,7 @@ function Layout({ children }) {
                     </div>
 
                     <div className="nav-group">
-                        <div className="nav-group-label">視覺工坊 🖼</div>
+                        <div className="nav-group-label">視覺工坊</div>
                         <NavLink
                             to="/ocr"
                             className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
@@ -67,6 +68,13 @@ function Layout({ children }) {
                         >
                             <span className="icon">🔍</span>
                             以圖搜頁
+                        </NavLink>
+                        <NavLink
+                            to="/clip-ocr"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">🛠️</span>
+                            PDF擷取資料
                         </NavLink>
                     </div>
                 </nav>
@@ -96,6 +104,7 @@ export default function App() {
                         <Route path="/subsync" element={<SubSync />} />
                         <Route path="/ocr" element={<OCR />} />
                         <Route path="/clip-search" element={<ClipSearch />} />
+                        <Route path="/clip-ocr" element={<ClipOcrWorkflow />} />
                     </Routes>
                 </Layout>
             )}
