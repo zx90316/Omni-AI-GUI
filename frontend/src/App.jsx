@@ -18,7 +18,7 @@ function Layout({ children }) {
             <aside className="sidebar">
                 <div className="sidebar-brand">
                     <h1>Omni AI</h1>
-                    <span>全能 AI 平台</span>
+                    <span>多模態 AI 處理工具</span>
                 </div>
                 {token && (
                     <div className="user-info" style={{ padding: '0 1.5rem', marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
