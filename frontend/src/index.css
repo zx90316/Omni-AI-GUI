@@ -1207,3 +1207,222 @@ a:hover {
     gap: var(--space-sm);
   }
 }
+
+/* ── OCR 頁面 ── */
+
+.ocr-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xl);
+  align-items: start;
+}
+
+.ocr-section-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: var(--space-md);
+}
+
+.ocr-options-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+
+/* 欄位編輯器 */
+.ocr-fields-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+
+.ocr-fields-header .ocr-section-title {
+  margin-bottom: 0;
+}
+
+.ocr-fields-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.ocr-fields-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-md);
+}
+
+.ocr-fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: var(--space-xs);
+}
+
+.ocr-field-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.ocr-field-key {
+  flex: 1;
+}
+
+.ocr-field-value {
+  flex: 1;
+}
+
+.ocr-field-remove {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: var(--color-error);
+  border-color: var(--color-error-bg) !important;
+}
+
+.ocr-field-remove:hover {
+  background: var(--color-error-bg) !important;
+}
+
+/* 錯誤 */
+.ocr-error {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* 處理中 */
+.ocr-processing-card {
+  max-width: 480px;
+  text-align: center;
+  padding: var(--space-2xl) var(--space-xl);
+}
+
+.ocr-processing-icon {
+  margin-bottom: var(--space-lg);
+}
+
+/* 結果 */
+.ocr-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+}
+
+.ocr-results-header h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.ocr-results-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.ocr-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-lg);
+}
+
+.ocr-result-card {
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.ocr-result-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.ocr-result-card.ocr-result-error {
+  border-color: var(--color-error);
+  background: #fffcfb;
+}
+
+.ocr-result-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.ocr-result-data {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.ocr-result-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 0.88rem;
+}
+
+.ocr-result-row:last-child {
+  border-bottom: none;
+}
+
+.ocr-result-key {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.ocr-result-value {
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.ocr-raw-text {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 響應式 */
+@media (max-width: 900px) {
+  .ocr-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ocr-results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ocr-results-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+}

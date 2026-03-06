@@ -67,7 +67,7 @@ def open_env_editor(parent_window, on_saved=None):
     def _on_mousewheel(event):
         try:
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        except ttk.TclError:
+        except Exception:
             pass
         
     canvas.bind_all("<MouseWheel>", _on_mousewheel)

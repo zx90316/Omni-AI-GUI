@@ -3,6 +3,7 @@ import TaskList from './pages/TaskList.jsx'
 import NewTask from './pages/NewTask.jsx'
 import TaskDetail from './pages/TaskDetail.jsx'
 import SubSync from './pages/SubSync.jsx'
+import OCR from './pages/OCR.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -46,6 +47,13 @@ function Layout({ children }) {
                         <span className="icon">🎬</span>
                         SubSync
                     </NavLink>
+                    <NavLink
+                        to="/ocr"
+                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    >
+                        <span className="icon">📄</span>
+                        OCR 辨識
+                    </NavLink>
                 </nav>
             </aside>
             <main className="main-content">
@@ -71,6 +79,7 @@ export default function App() {
                         <Route path="/new" element={<NewTask />} />
                         <Route path="/tasks/:id" element={<TaskDetail />} />
                         <Route path="/subsync" element={<SubSync />} />
+                        <Route path="/ocr" element={<OCR />} />
                     </Routes>
                 </Layout>
             )}

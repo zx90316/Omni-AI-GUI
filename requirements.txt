@@ -37,3 +37,6 @@ openai
 google-genai
 PyJWT
 pydantic[email]
+
+# OCR (PDF 處理)
+PyMuPDF
