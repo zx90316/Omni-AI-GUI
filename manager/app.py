@@ -470,6 +470,13 @@ class ManagerApp:
         net_frame = ttk.LabelFrame(inner, text="  🌐 網路設定  ")
         net_frame.pack(fill=X, pady=(0, 10), ipadx=10, ipady=8)
 
+        fe_host_frame = ttk.Frame(net_frame)
+        fe_host_frame.pack(fill=X, pady=(0, 5))
+
+        ttk.Label(fe_host_frame, text="Frontend Host:", width=15).pack(side=LEFT)
+        self.frontend_host_var = ttk.StringVar(value=str(self.config.get("frontend_host", "localhost")))
+        ttk.Entry(fe_host_frame, textvariable=self.frontend_host_var, width=15).pack(side=LEFT)
+
         port_frame = ttk.Frame(net_frame)
         port_frame.pack(fill=X, pady=(0, 5))
 
@@ -838,6 +845,7 @@ class ManagerApp:
         self.config["auto_start_on_launch"] = self.auto_start_var.get()
         self.config["start_backend"] = self.start_backend_var.get()
         self.config["start_frontend"] = self.start_frontend_var.get()
+        self.config["frontend_host"] = self.frontend_host_var.get().strip()
 
         try:
             self.config["backend_port"] = int(self.backend_port_var.get())

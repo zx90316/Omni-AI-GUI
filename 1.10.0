@@ -1,36 +1,11 @@
-Collecting ttkbootstrap
-  Downloading ttkbootstrap-1.20.2-py3-none-any.whl.metadata (6.3 kB)
-Collecting python-dotenv
-  Downloading python_dotenv-1.2.2-py3-none-any.whl.metadata (27 kB)
-Collecting psutil
-  Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl.metadata (22 kB)
-Collecting pyinstaller
-  Downloading pyinstaller-6.19.0-py3-none-win_amd64.whl.metadata (8.5 kB)
-Collecting pillow<13,>=10 (from ttkbootstrap)
-  Downloading pillow-12.1.1-cp311-cp311-win_amd64.whl.metadata (9.0 kB)
-Collecting altgraph (from pyinstaller)
-  Downloading altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
-Collecting packaging>=22.0 (from pyinstaller)
-  Downloading packaging-26.0-py3-none-any.whl.metadata (3.3 kB)
-Collecting pefile>=2022.5.30 (from pyinstaller)
-  Downloading pefile-2024.8.26-py3-none-any.whl.metadata (1.4 kB)
-Collecting pyinstaller-hooks-contrib>=2026.0 (from pyinstaller)
-  Downloading pyinstaller_hooks_contrib-2026.2-py3-none-any.whl.metadata (16 kB)
-Collecting pywin32-ctypes>=0.2.1 (from pyinstaller)
-  Using cached pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Requirement already satisfied: ttkbootstrap in .\.venv\Lib\site-packages (1.20.2)
+Requirement already satisfied: python-dotenv in .\.venv\Lib\site-packages (1.2.2)
+Requirement already satisfied: psutil in .\.venv\Lib\site-packages (7.2.2)
+Requirement already satisfied: pyinstaller in .\.venv\Lib\site-packages (6.19.0)
+Requirement already satisfied: pillow<13,>=10 in .\.venv\Lib\site-packages (from ttkbootstrap) (12.1.1)
+Requirement already satisfied: altgraph in .\.venv\Lib\site-packages (from pyinstaller) (0.17.5)
+Requirement already satisfied: packaging>=22.0 in .\.venv\Lib\site-packages (from pyinstaller) (26.0)
+Requirement already satisfied: pefile>=2022.5.30 in .\.venv\Lib\site-packages (from pyinstaller) (2024.8.26)
+Requirement already satisfied: pyinstaller-hooks-contrib>=2026.0 in .\.venv\Lib\site-packages (from pyinstaller) (2026.2)
+Requirement already satisfied: pywin32-ctypes>=0.2.1 in .\.venv\Lib\site-packages (from pyinstaller) (0.2.3)
 Requirement already satisfied: setuptools>=42.0.0 in .\.venv\Lib\site-packages (from pyinstaller) (65.5.0)
-Downloading ttkbootstrap-1.20.2-py3-none-any.whl (190 kB)
-Downloading pillow-12.1.1-cp311-cp311-win_amd64.whl (7.0 MB)
-   ---------------------------------------- 7.0/7.0 MB 9.2 MB/s  0:00:00
-Downloading python_dotenv-1.2.2-py3-none-any.whl (22 kB)
-Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl (137 kB)
-Downloading pyinstaller-6.19.0-py3-none-win_amd64.whl (1.4 MB)
-   ---------------------------------------- 1.4/1.4 MB 7.2 MB/s  0:00:00
-Downloading packaging-26.0-py3-none-any.whl (74 kB)
-Downloading pefile-2024.8.26-py3-none-any.whl (74 kB)
-Downloading pyinstaller_hooks_contrib-2026.2-py3-none-any.whl (453 kB)
-Using cached pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
-Downloading altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
-Installing collected packages: altgraph, pywin32-ctypes, python-dotenv, psutil, pillow, pefile, packaging, ttkbootstrap, pyinstaller-hooks-contrib, pyinstaller
-
-Successfully installed altgraph-0.17.5 packaging-26.0 pefile-2024.8.26 pillow-12.1.1 psutil-7.2.2 pyinstaller-6.19.0 pyinstaller-hooks-contrib-2026.2 python-dotenv-1.2.2 pywin32-ctypes-0.2.3 ttkbootstrap-1.20.2
