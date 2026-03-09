@@ -18,6 +18,8 @@ SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = os.getenv("SMTP_PORT", "465")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL")
+
 
 security = HTTPBearer(auto_error=False)
 
@@ -54,13 +56,18 @@ def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials
     return verify_token(token)
 
 def send_verification_email(to_email: str, code: str):
-    if not SMTP_USER or not SMTP_PASSWORD:
-        raise ValueError("SMTP_USER or SMTP_PASSWORD not configured in .env")
-
     msg = EmailMessage()
     msg.set_content(f"您的 Omni AI 登入驗證碼為：{code}\n\n驗證碼 5 分鐘內有效。請勿將此驗證碼告訴他人。")
     msg["Subject"] = "Omni AI 登入驗證碼"
-    msg["From"] = SMTP_USER
+    
+    # 決定寄件者顯示信箱
+    if SMTP_FROM_EMAIL:
+        msg["From"] = SMTP_FROM_EMAIL
+    elif SMTP_USER:
+        msg["From"] = SMTP_USER
+    else:
+        msg["From"] = "noreply@omni-ai.local"
+        
     msg["To"] = to_email
 
     try:
@@ -68,16 +75,24 @@ def send_verification_email(to_email: str, code: str):
         if port == 465:
             # 針對 465 port (SSL)
             with smtplib.SMTP_SSL(SMTP_HOST, port) as server:
-                server.login(SMTP_USER, SMTP_PASSWORD)
+                if SMTP_USER and SMTP_PASSWORD:
+                    server.login(SMTP_USER, SMTP_PASSWORD)
                 server.send_message(msg)
         else:
             # 針對其他 port 通常使用 STARTTLS (例如 587, 25 等)
             with smtplib.SMTP(SMTP_HOST, port) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
+                if port != 25:
+                    try:
+                        server.starttls()
+                    except Exception:
+                        pass
+                
+                if SMTP_USER and SMTP_PASSWORD:
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                
                 server.send_message(msg)
     except Exception as e:
-        print(f"Failed to send email: {e}")
-        raise e
-        print(f"Failed to send email: {e}")
-        raise e
+        import traceback
+        error_detail = f"Failed to send email: {e}\n{traceback.format_exc()}"
+        print(error_detail)
+        raise ValueError(f"寄送郵件失敗: {e}")
