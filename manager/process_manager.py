@@ -251,7 +251,17 @@ class ProcessManager:
         # Frontend 命令
         npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
         frontend_host = self._config.get("frontend_host", "localhost")
-        frontend_cmd = [npm_cmd, "run", "dev", "--", "--host", frontend_host]
+        frontend_port = self._config.get("frontend_port", 5173)
+
+        # 透過環境變數傳遞給 Vite
+        frontend_env = {
+            "HOST": frontend_host,
+            "PORT": str(frontend_port),
+            "BACKEND_HOST": backend_host,
+            "BACKEND_PORT": str(backend_port)
+        }
+
+        frontend_cmd = [npm_cmd, "run", "dev"]
 
         self._processes["frontend"] = ManagedProcess(
             name="frontend",
@@ -259,6 +269,7 @@ class ProcessManager:
             cwd=get_frontend_dir(),
             on_output=self.on_output,
             on_status_change=self.on_status_change,
+            env=frontend_env,
         )
 
     def start_backend(self) -> bool:

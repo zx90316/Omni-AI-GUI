@@ -4,15 +4,15 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
     plugins: [react()],
     server: {
-        host: true, // Listen on all local IPs
-        port: 5173,
+        host: process.env.HOST || true, // Listen on all local IPs or specify host
+        port: parseInt(process.env.PORT) || 5173,
         proxy: {
             '/api': {
-                target: 'http://localhost:8000',
+                target: `http://${process.env.BACKEND_HOST || 'localhost'}:${process.env.BACKEND_PORT || 8000}`,
                 changeOrigin: true,
             },
             '/auth': {
-                target: 'http://localhost:8000',
+                target: `http://${process.env.BACKEND_HOST || 'localhost'}:${process.env.BACKEND_PORT || 8000}`,
                 changeOrigin: true,
             },
         },
