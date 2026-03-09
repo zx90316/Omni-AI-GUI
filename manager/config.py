@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
     "detected_compute_platform": "",
     "backend_host": "0.0.0.0",
     "backend_port": 8000,
+    "frontend_host": "localhost",
     "frontend_port": 5173,
     "health_check_interval": 5,       # 健康檢查間隔（秒）
     "restart_delay": 3,               # 重啟延遲（秒）

@@ -16,6 +16,8 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30 # Token expires in 30 days
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = os.getenv("SMTP_PORT", "465")
 
 security = HTTPBearer(auto_error=False)
 
@@ -62,9 +64,20 @@ def send_verification_email(to_email: str, code: str):
     msg["To"] = to_email
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        port = int(SMTP_PORT)
+        if port == 465:
+            # 針對 465 port (SSL)
+            with smtplib.SMTP_SSL(SMTP_HOST, port) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            # 針對其他 port 通常使用 STARTTLS (例如 587, 25 等)
+            with smtplib.SMTP(SMTP_HOST, port) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
     except Exception as e:
+        print(f"Failed to send email: {e}")
+        raise e
         print(f"Failed to send email: {e}")
         raise e

@@ -6,6 +6,7 @@
   "detected_compute_platform": "cu128",
   "backend_host": "0.0.0.0",
   "backend_port": 8000,
+  "frontend_host": "localhost",
   "frontend_port": 5173,
   "health_check_interval": 5,
   "restart_delay": 3,

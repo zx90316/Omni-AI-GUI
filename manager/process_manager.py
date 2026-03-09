@@ -250,7 +250,8 @@ class ProcessManager:
 
         # Frontend 命令
         npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
-        frontend_cmd = [npm_cmd, "run", "dev"]
+        frontend_host = self._config.get("frontend_host", "localhost")
+        frontend_cmd = [npm_cmd, "run", "dev", "--", "--host", frontend_host]
 
         self._processes["frontend"] = ManagedProcess(
             name="frontend",

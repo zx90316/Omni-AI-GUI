@@ -68,6 +68,41 @@ def unload_clip_model():
 
 # ── 核心比對 ──
 
+def extract_image_feature(image_bytes: bytes) -> tuple[list[float], int]:
+    """
+    自給定圖片提取 CLIP 特徵向量。
+    向量會作 L2 正規化，以供餘弦相似度直接運算。
+    
+    Args:
+        image_bytes: 圖片的 bytes 內容
+        
+    Returns:
+        (feature_vector, dimension)
+    """
+    if Image is None:
+        raise RuntimeError("Pillow 未安裝，請執行 pip install Pillow")
+
+    model, processor = load_clip_model()
+    
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception as e:
+        raise ValueError(f"無法讀取圖片: {e}")
+
+    with torch.no_grad():
+        inputs = processor(images=[img], return_tensors="pt", padding=True).to(_device)
+        features = model.get_image_features(**inputs)
+        # 正規化
+        features = features / features.norm(p=2, dim=-1, keepdim=True)
+        
+    vector = features.cpu().numpy().flatten().tolist()
+    
+    # 執行完畢釋放記憶體 (可選，但為了保留原先 `clip_engine` 隨用隨清的風格，這裡我們也執行 unload)
+    # 如果系統需要高頻呼叫 API，您也可以把這行改成由 client 決定是否 unload
+    unload_clip_model()
+    
+    return vector, len(vector)
+
 def search_similar_pages(
     pdf_bytes: bytes,
     ref_images_bytes: List[bytes],

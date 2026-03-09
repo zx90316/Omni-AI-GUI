@@ -6,6 +6,7 @@ import SubSync from './pages/SubSync.jsx'
 import OCR from './pages/OCR.jsx'
 import ClipSearch from './pages/ClipSearch.jsx'
 import ClipOcrWorkflow from './pages/ClipOcrWorkflow.jsx'
+import VectorExtractor from './pages/VectorExtractor.jsx'
 import Semantic from './pages/Semantic.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -77,6 +78,13 @@ function Layout({ children }) {
                             <span className="icon">🛠️</span>
                             PDF擷取資料
                         </NavLink>
+                        <NavLink
+                            to="/vector-extractor"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">📊</span>
+                            向量提取
+                        </NavLink>
                     </div>
 
                     <div className="nav-group">
@@ -117,6 +125,7 @@ export default function App() {
                         <Route path="/ocr" element={<OCR />} />
                         <Route path="/clip-search" element={<ClipSearch />} />
                         <Route path="/clip-ocr" element={<ClipOcrWorkflow />} />
+                        <Route path="/vector-extractor" element={<VectorExtractor />} />
                         <Route path="/semantic" element={<Semantic />} />
                     </Routes>
                 </Layout>

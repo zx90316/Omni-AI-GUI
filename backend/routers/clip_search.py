@@ -5,13 +5,15 @@
 import json
 import asyncio
 import pathlib
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import base64
 
 from backend.auth_utils import get_current_user
-from backend.clip_engine import search_similar_pages
+from backend.clip_engine import search_similar_pages, extract_image_feature
 
 router = APIRouter(prefix="/api/clip-search", tags=["clip-search"])
 
@@ -19,6 +21,86 @@ ALLOWED_PDF_EXT = {".pdf"}
 ALLOWED_IMG_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"}
 MAX_PDF_SIZE = 100 * 1024 * 1024   # 100 MB
 MAX_IMG_SIZE = 20 * 1024 * 1024    # 20 MB per image
+
+
+class ExtractFeatureRequest(BaseModel):
+    """圖像向量提取請求"""
+    image_base64: str
+
+class ExtractFeatureResponse(BaseModel):
+    """圖像向量提取響應"""
+    success: bool
+    vector: Optional[List[float]] = None  # 512 或 768 維向量 (視模型而定)
+    vector_dimension: Optional[int] = None
+    error: Optional[str] = None
+
+
+@router.post("/extract-feature", response_model=ExtractFeatureResponse)
+async def extract_feature_api(
+    request: ExtractFeatureRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    從 Base64 圖像提取 CLIP 特徵向量
+    向量已正規化，可直接用於餘弦相似度計算（點積）
+    """
+    try:
+        # 移除 data URI 前綴 (如 "data:image/jpeg;base64,")
+        image_base64 = request.image_base64
+        if "," in image_base64:
+            image_base64 = image_base64.split(",")[1]
+            
+        # 解碼 Base64
+        image_data = base64.b64decode(image_base64)
+        
+        vector, dim = extract_image_feature(image_data)
+        
+        return ExtractFeatureResponse(
+            success=True,
+            vector=vector,
+            vector_dimension=dim
+        )
+    except Exception as e:
+        import traceback
+        error_detail = f"向量提取失敗: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)
+        return ExtractFeatureResponse(success=False, error=str(e))
+
+
+@router.post("/extract-feature-file", response_model=ExtractFeatureResponse)
+async def extract_feature_file_api(
+    image_file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    從上傳圖片檔案提取 CLIP 特徵向量
+    """
+    try:
+        img_ext = pathlib.Path(image_file.filename or "").suffix.lower()
+        if img_ext not in ALLOWED_IMG_EXT:
+            return ExtractFeatureResponse(
+                success=False, 
+                error=f"不支援的圖片格式: {img_ext}，支援: {', '.join(sorted(ALLOWED_IMG_EXT))}"
+            )
+            
+        img_bytes = await image_file.read()
+        if len(img_bytes) > MAX_IMG_SIZE:
+             return ExtractFeatureResponse(
+                success=False, 
+                error=f"圖片 {image_file.filename} 大小超過 20 MB 限制"
+            )
+             
+        vector, dim = extract_image_feature(img_bytes)
+        return ExtractFeatureResponse(
+            success=True,
+            vector=vector,
+            vector_dimension=dim
+        )
+    except Exception as e:
+        import traceback
+        error_detail = f"檔案向量提取失敗: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)
+        return ExtractFeatureResponse(success=False, error=str(e))
 
 
 @router.post("/analyze")
