@@ -7,10 +7,8 @@ import asyncio
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
-
-from backend.auth_utils import get_current_user
 from backend.ocr_engine import process_file_stream
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
@@ -25,7 +23,6 @@ async def ocr_process(
     fields: str = Form(...),
     model: str = Form("glm-ocr"),
     max_retries: int = Form(3),
-    current_user: dict = Depends(get_current_user),
 ):
     """
     上傳圖片或 PDF 進行 OCR 辨識。

@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db, Task
 from backend.llm_manager import llm_manager
-from backend.auth_utils import get_current_user
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 
@@ -43,9 +42,9 @@ async def get_providers() -> Dict[str, list]:
 cancelled_tasks = set()
 
 @router.post("/process")
-async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
     """逐句處理字幕 (潤飾或翻譯)，並透過 SSE 回傳進度"""
-    db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
+    db_task = db.query(Task).filter(Task.id == req.task_id).first()
         
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -130,7 +129,7 @@ async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db), 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/cancel")
-async def cancel_processing(req: CancelRequest, current_user: dict = Depends(get_current_user)):
+async def cancel_processing(req: CancelRequest):
     """標記特定任務為取消狀態"""
     cancel_key = f"{req.task_type}_{req.task_id}"
     cancelled_tasks.add(cancel_key)
@@ -138,9 +137,9 @@ async def cancel_processing(req: CancelRequest, current_user: dict = Depends(get
 
 
 @router.post("/save")
-async def save_processed_subtitles(req: SaveRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def save_processed_subtitles(req: SaveRequest, db: Session = Depends(get_db)):
     """前端微調後，儲存最終版的字幕"""
-    db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
+    db_task = db.query(Task).filter(Task.id == req.task_id).first()
         
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")

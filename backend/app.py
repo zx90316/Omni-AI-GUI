@@ -2,10 +2,11 @@
 """
 FastAPI 應用入口
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import init_db
+from backend.auth_utils import get_current_user
 from backend.routers.tasks import router as tasks_router
 from backend.routers.youtube import router as youtube_router
 from backend.routers.llm import router as llm_router
@@ -31,9 +32,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 路由掛載 ──
-app.include_router(tasks_router)
-app.include_router(youtube_router)
+# ── 路由掛載（需驗證）──
+auth_required = [Depends(get_current_user)]
+app.include_router(tasks_router, dependencies=auth_required)
+app.include_router(youtube_router, dependencies=auth_required)
+
+# ── 路由掛載（無需驗證）──
 app.include_router(llm_router)
 app.include_router(auth_router)
 app.include_router(ocr_router)

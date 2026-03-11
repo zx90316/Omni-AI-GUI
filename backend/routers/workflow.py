@@ -8,10 +8,8 @@ import os
 import pathlib
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
-
-from backend.auth_utils import get_current_user
 from backend.clip_engine import search_similar_pages
 from backend.ocr_engine import build_ocr_prompt, _call_glm_ocr
 
@@ -30,7 +28,8 @@ async def clip_ocr_top1(
     must_exclude: str = Form(""),
     threshold: float = Form(0.5),
     fields: str = Form(...),
-    current_user: dict = Depends(get_current_user),
+    model: str = Form("glm-ocr"),
+    max_retries: int = Form(3),
 ):
     # PDF check
     pdf_ext = pathlib.Path(pdf_file.filename or "").suffix.lower()

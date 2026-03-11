@@ -7,12 +7,11 @@ import asyncio
 import pathlib
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import base64
 
-from backend.auth_utils import get_current_user
 from backend.clip_engine import search_similar_pages, extract_image_feature
 
 router = APIRouter(prefix="/api/clip-search", tags=["clip-search"])
@@ -38,7 +37,6 @@ class ExtractFeatureResponse(BaseModel):
 @router.post("/extract-feature", response_model=ExtractFeatureResponse)
 async def extract_feature_api(
     request: ExtractFeatureRequest,
-    current_user: dict = Depends(get_current_user)
 ):
     """
     從 Base64 圖像提取 CLIP 特徵向量
@@ -70,7 +68,6 @@ async def extract_feature_api(
 @router.post("/extract-feature-file", response_model=ExtractFeatureResponse)
 async def extract_feature_file_api(
     image_file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
 ):
     """
     從上傳圖片檔案提取 CLIP 特徵向量
@@ -111,7 +108,6 @@ async def clip_search_analyze(
     must_exclude: str = Form(""),
     threshold: float = Form(0.5),
     top_k: int = Form(5),
-    current_user: dict = Depends(get_current_user),
 ):
     """
     以圖搜頁 — 上傳 PDF 與一或多張參考圖片，使用 CLIP 模型找出最相似的頁面。
