@@ -4,6 +4,7 @@ import NewTask from './pages/NewTask.jsx'
 import TaskDetail from './pages/TaskDetail.jsx'
 import SubSync from './pages/SubSync.jsx'
 import OCR from './pages/OCR.jsx'
+import OcrCorrectionMap from './pages/OcrCorrectionMap.jsx'
 import ClipSearch from './pages/ClipSearch.jsx'
 import ClipOcrWorkflow from './pages/ClipOcrWorkflow.jsx'
 import VectorExtractor from './pages/VectorExtractor.jsx'
@@ -65,6 +66,13 @@ function Layout({ children }) {
                             OCR 辨識
                         </NavLink>
                         <NavLink
+                            to="/ocr-correction"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">🔤</span>
+                            形近字修正
+                        </NavLink>
+                        <NavLink
                             to="/clip-search"
                             className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                         >
@@ -123,6 +131,7 @@ export default function App() {
                         <Route path="/tasks/:id" element={<TaskDetail />} />
                         <Route path="/subsync" element={<SubSync />} />
                         <Route path="/ocr" element={<OCR />} />
+                        <Route path="/ocr-correction" element={<OcrCorrectionMap />} />
                         <Route path="/clip-search" element={<ClipSearch />} />
                         <Route path="/clip-ocr" element={<ClipOcrWorkflow />} />
                         <Route path="/vector-extractor" element={<VectorExtractor />} />

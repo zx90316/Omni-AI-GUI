@@ -27,9 +27,13 @@ export default function OCR() {
     // 欄位
     const [fields, setFields] = useState(() => DEFAULT_FIELDS.map(f => ({ ...f })))
 
-    // 模型 & 重試
+    // 模型 & 重試 & 合併
     const [model, setModel] = useState('glm-ocr')
     const [maxRetries, setMaxRetries] = useState(3)
+    const [autoMerge, setAutoMerge] = useState(false)
+
+    // 合併結果
+    const [mergedResult, setMergedResult] = useState(null)
 
     // 處理狀態
     const [processing, setProcessing] = useState(false)
@@ -118,6 +122,7 @@ export default function OCR() {
         setCurrentPage(0)
         setTotalPages(0)
         setResults([])
+        setMergedResult(null)
         setError('')
 
         try {
@@ -126,6 +131,7 @@ export default function OCR() {
             formData.append('fields', JSON.stringify(fieldsDict))
             formData.append('model', model)
             formData.append('max_retries', String(maxRetries))
+            formData.append('auto_merge', autoMerge ? 'true' : 'false')
 
             const response = await fetchWithAuth('/api/ocr/process', {
                 method: 'POST',
@@ -166,6 +172,9 @@ export default function OCR() {
 
                         if (data.done && data.all_results) {
                             setResults(data.all_results)
+                            if (data.merged) {
+                                setMergedResult(data.merged)
+                            }
                         } else if (!data.done) {
                             // 即時更新中間結果
                             setResults(prev => {
@@ -264,7 +273,6 @@ export default function OCR() {
                                 )}
                             </div>
 
-                            {/* 模型 & 重試 */}
                             <div className="ocr-options-row">
                                 <div className="form-group">
                                     <label className="form-label">模型名稱</label>
@@ -300,6 +308,19 @@ export default function OCR() {
                                     </select>
                                 </div>
                             </div>
+
+                            {extractionMode === 'keywords' && (
+                                <div style={{ marginTop: 'var(--space-md)' }}>
+                                    <label className="checkbox-label">
+                                        <input
+                                            type="checkbox"
+                                            checked={autoMerge}
+                                            onChange={e => setAutoMerge(e.target.checked)}
+                                        />
+                                        多頁自動合併（PDF 多頁結果一致取值、不一致清除）
+                                    </label>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -403,11 +424,32 @@ export default function OCR() {
                             <button className="btn btn-outline btn-sm" onClick={exportJSON}>
                                 💾 匯出 {extractionMode === 'fullText' ? 'TXT' : 'JSON'}
                             </button>
-                            <button className="btn btn-primary btn-sm" onClick={() => { setResults([]); setProgress(0); setError('') }}>
+                            <button className="btn btn-primary btn-sm" onClick={() => { setResults([]); setMergedResult(null); setProgress(0); setError('') }}>
                                 🔄 重新辨識
                             </button>
                         </div>
                     </div>
+
+                    {mergedResult && (
+                        <div className="card ocr-merged-card" style={{ marginBottom: 'var(--space-lg)' }}>
+                            <div className="ocr-result-card-header">
+                                <span className="badge badge-completed">📑 合併結果</span>
+                                <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                                    已合併 {results.length} 頁
+                                </span>
+                            </div>
+                            <div className="ocr-result-data">
+                                {Object.entries(mergedResult).map(([key, val]) => (
+                                    <div key={key} className="ocr-result-row">
+                                        <span className="ocr-result-key">{key}</span>
+                                        <span className={`ocr-result-value ${!val ? 'ocr-value-conflict' : ''}`}>
+                                            {val || '— (不一致，已清除)'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <div className="ocr-results-grid">
                         {results.map((r, i) => (

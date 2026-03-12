@@ -1451,6 +1451,180 @@ a:hover {
   }
 }
 
+/* ── OCR 合併結果卡片 ── */
+.ocr-merged-card {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary-subtle);
+}
+
+.ocr-value-conflict {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* ── 形近字修正字典頁面 ── */
+.corr-success {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.corr-add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.corr-add-row .form-input {
+  flex: 1;
+}
+
+.corr-arrow {
+  font-size: 1.2rem;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.corr-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+}
+
+.corr-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.corr-toolbar-right {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.corr-filter-input {
+  width: 220px;
+}
+
+.corr-table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.corr-table-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.corr-table-body {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.corr-table-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: 1px solid var(--color-border-light);
+  transition: background var(--transition);
+}
+
+.corr-table-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.corr-table-row .form-input {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 8px;
+  font-size: 0.88rem;
+}
+
+.corr-table-row .form-input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.corr-col-wrong {
+  flex: 1;
+  min-width: 0;
+}
+
+.corr-col-right {
+  flex: 1;
+  min-width: 0;
+}
+
+.corr-col-arrow {
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.corr-col-action {
+  flex-shrink: 0;
+  width: 40px;
+}
+
+.corr-group {
+  margin-bottom: 0;
+}
+
+.corr-group-label {
+  padding: 6px var(--space-md);
+  background: var(--color-primary-light);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  letter-spacing: 0.02em;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.corr-empty {
+  padding: var(--space-xl);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 900px) {
+  .corr-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .corr-add-row {
+    flex-wrap: wrap;
+  }
+
+  .corr-filter-input {
+    width: 100%;
+  }
+}
+
 /* ── ClipSearch 頁面 ── */
 
 .clip-search-page .clip-layout {
