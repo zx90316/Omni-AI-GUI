@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 # 按 CUDA 版本由高到低排列，優先匹配最新版本
 PYTORCH_PLATFORMS = [
     {"min_cuda": "12.8", "platform": "cu128"},
-    {"min_cuda": "12.4", "platform": "cu124"},
-    {"min_cuda": "12.1", "platform": "cu121"},
-    {"min_cuda": "11.8", "platform": "cu118"},
+    {"min_cuda": "12.6", "platform": "cu126"},
+    {"min_cuda": "12.4", "platform": "cu126"},
+    {"min_cuda": "12.2", "platform": "cu126"},
+    {"min_cuda": "12.1", "platform": "cu126"}
 ]
 
 PYTORCH_INDEX_BASE = "https://download.pytorch.org/whl"
