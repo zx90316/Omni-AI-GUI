@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 ASR 核心引擎
 封裝 Omni AI 轉錄、語者分離、合併邏輯，支援 GPU/CPU 與多模型切換。
@@ -83,26 +83,38 @@ class ASREngine:
     # ============================================
 
     def load_model(self):
-        """載入 ASR 模型"""
+        """載入 ASR 模型（含離線保護）"""
         if self._model is not None:
             return
 
         from qwen_asr import Qwen3ASRModel
         from backend.config import FORCED_ALIGNER
+        from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+
+        if is_offline_mode():
+            for mid in [self.model_name, FORCED_ALIGNER]:
+                if not is_model_cached(mid):
+                    raise RuntimeError(make_offline_error_message(mid))
 
         self._progress(5, f"載入模型 {self.model_name}...")
-        self._model = Qwen3ASRModel.from_pretrained(
-            self.model_name,
-            dtype=self.dtype,
-            device_map=self.device,
-            max_inference_batch_size=32,
-            max_new_tokens=4096,
-            forced_aligner=FORCED_ALIGNER,
-            forced_aligner_kwargs=dict(
+        try:
+            self._model = Qwen3ASRModel.from_pretrained(
+                self.model_name,
                 dtype=self.dtype,
                 device_map=self.device,
-            ),
-        )
+                max_inference_batch_size=32,
+                max_new_tokens=4096,
+                forced_aligner=FORCED_ALIGNER,
+                forced_aligner_kwargs=dict(
+                    dtype=self.dtype,
+                    device_map=self.device,
+                ),
+            )
+        except (OSError, ConnectionError, Exception) as e:
+            err_str = str(e).lower()
+            if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):
+                raise RuntimeError(make_offline_error_message(self.model_name)) from e
+            raise
         self._progress(15, "模型載入完成")
 
     def unload_model(self):
@@ -310,18 +322,28 @@ class ASREngine:
     # ============================================
 
     def diarize(self, audio_path: str) -> List[Dict]:
-        """執行語者分離"""
+        """執行語者分離（含離線保護）"""
         self._progress(62, "載入語者分離模型...")
 
         import torch
         from pyannote.audio import Pipeline
         from backend.audio_utils import load_audio
         from backend.config import DIARIZATION_MODEL, HF_TOKEN
+        from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
 
-        pipeline = Pipeline.from_pretrained(
-            DIARIZATION_MODEL,
-            token=HF_TOKEN or None,
-        )
+        if is_offline_mode() and not is_model_cached(DIARIZATION_MODEL):
+            raise RuntimeError(make_offline_error_message(DIARIZATION_MODEL))
+
+        try:
+            pipeline = Pipeline.from_pretrained(
+                DIARIZATION_MODEL,
+                token=HF_TOKEN or None,
+            )
+        except (OSError, ConnectionError, Exception) as e:
+            err_str = str(e).lower()
+            if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):
+                raise RuntimeError(make_offline_error_message(DIARIZATION_MODEL)) from e
+            raise
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         pipeline.to(torch.device(device))

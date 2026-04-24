@@ -1,7 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 FastAPI 應用入口
 """
+import logging
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,7 +17,11 @@ from backend.routers.ocr import router as ocr_router
 from backend.routers.clip_search import router as clip_search_router
 from backend.routers.workflow import router as workflow_router
 from backend.routers.semantic import router as semantic_router
+from backend.routers.system import router as system_router
 from backend.semantic_engine import init_semantic_models, start_worker, stop_worker_and_cleanup
+from backend.network_utils import check_huggingface_reachable, set_hf_offline_env
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Omni AI API",
@@ -44,20 +50,24 @@ app.include_router(ocr_router)
 app.include_router(clip_search_router)
 app.include_router(workflow_router)
 app.include_router(semantic_router)
+app.include_router(system_router)
 
 
 @app.on_event("startup")
 async def startup():
-    """啟動時初始化資料庫與語意模型背景程序"""
+    """啟動時初始化資料庫、偵測網路狀態並啟動語意模型背景程序"""
     init_db()
-    # 非同步啟動 worker，但在這之前需要將模型載入（如果需要事先載入的話）
-    # Semantic API 若未安裝 FlagEmbedding，會跳過載入不影響主體
+
+    if not check_huggingface_reachable():
+        set_hf_offline_env()
+        logger.warning("HuggingFace Hub 不可達，已自動切換至離線模式")
+    else:
+        logger.info("HuggingFace Hub 連線正常")
+
     import asyncio
     
     async def load_bge():
-        # 模型載入是同步且耗時的，放入 thread pool 執行
         await asyncio.to_thread(init_semantic_models)
-        # 載入完成後，在目前的 event loop 啟動 worker
         start_worker()
         
     asyncio.create_task(load_bge())

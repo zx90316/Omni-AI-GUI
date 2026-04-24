@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Semantic Engine (Embedding & Reranking)
 將原本 BGE_Api.py 中對應模型載入、資源管理、隊列處理整理至此
@@ -274,12 +274,19 @@ async def gpu_processor_worker():
 
 
 # ================== 生命週期管理與載入 ==================
+def _is_network_error(e: Exception) -> bool:
+    err_str = str(e).lower()
+    return any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"])
+
+
 def init_semantic_models():
-    """初始化並載入 Semantic Models (Reranker, Embedding)"""
+    """初始化並載入 Semantic Models (Reranker, Embedding)，含離線保護"""
     if not FlagReranker or not BGEM3FlagModel:
         logger.warning("未安裝 FlagEmbedding。請使用 `pip install FlagEmbedding` 來啟用 Semantic 引擎。")
         return False
-        
+
+    from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+
     try:
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -289,31 +296,47 @@ def init_semantic_models():
             torch.backends.cudnn.enabled = True
             os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
         
+        offline = is_offline_mode()
+
         # 1. Reranker
-        logger.info("正在載入 Reranker 模型 BAAI/bge-reranker-v2-m3 (若無快取將自動下載)...")
+        reranker_id = "BAAI/bge-reranker-v2-m3"
+        logger.info(f"正在載入 Reranker 模型 {reranker_id} (若無快取將自動下載)...")
         try:
-            reranker = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=True, device=device)
-            if hasattr(reranker, 'model'):
-                reranker.model.eval()
-                for param in reranker.model.parameters():
-                    param.requires_grad = False
-            model_container.reranker = reranker
-            logger.info("✅ Reranker 模型載入成功")
+            if offline and not is_model_cached(reranker_id):
+                logger.warning(make_offline_error_message(reranker_id))
+            else:
+                reranker = FlagReranker(reranker_id, use_fp16=True, device=device)
+                if hasattr(reranker, 'model'):
+                    reranker.model.eval()
+                    for param in reranker.model.parameters():
+                        param.requires_grad = False
+                model_container.reranker = reranker
+                logger.info("✅ Reranker 模型載入成功")
         except Exception as e:
-            logger.error(f"Reranker 模型載入或下載失敗: {e}")
+            if _is_network_error(e):
+                logger.warning(make_offline_error_message(reranker_id))
+            else:
+                logger.error(f"Reranker 模型載入或下載失敗: {e}")
             
         # 2. Embedding
-        logger.info("正在載入 Embedding 模型 BAAI/bge-m3 (若無快取將自動下載)...")
+        embedding_id = "BAAI/bge-m3"
+        logger.info(f"正在載入 Embedding 模型 {embedding_id} (若無快取將自動下載)...")
         try:
-            embedding_model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True, device=device)
-            if hasattr(embedding_model, 'model'):
-                embedding_model.model.eval()
-                for param in embedding_model.model.parameters():
-                    param.requires_grad = False
-            model_container.embedding_model = embedding_model
-            logger.info("✅ Embedding 模型載入成功")
+            if offline and not is_model_cached(embedding_id):
+                logger.warning(make_offline_error_message(embedding_id))
+            else:
+                embedding_model = BGEM3FlagModel(embedding_id, use_fp16=True, device=device)
+                if hasattr(embedding_model, 'model'):
+                    embedding_model.model.eval()
+                    for param in embedding_model.model.parameters():
+                        param.requires_grad = False
+                model_container.embedding_model = embedding_model
+                logger.info("✅ Embedding 模型載入成功")
         except Exception as e:
-            logger.error(f"Embedding 模型載入或下載失敗: {e}")
+            if _is_network_error(e):
+                logger.warning(make_offline_error_message(embedding_id))
+            else:
+                logger.error(f"Embedding 模型載入或下載失敗: {e}")
             
             
         if model_container.reranker or model_container.embedding_model:

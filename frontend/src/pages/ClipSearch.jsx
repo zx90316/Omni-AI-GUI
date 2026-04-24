@@ -1,7 +1,10 @@
-import { useState, useRef, useCallback } from 'react'
+﻿import { useState, useRef, useCallback } from 'react'
 import { fetchWithAuth } from '../utils/api.js'
+import { useNetwork } from '../context/NetworkContext.jsx'
 
 export default function ClipSearch() {
+    const { offline, isModelCached } = useNetwork()
+    const clipMissing = offline && !isModelCached('clip')
     // 檔案
     const [pdfFile, setPdfFile] = useState(null)
     const [pdfDragOver, setPdfDragOver] = useState(false)
@@ -169,6 +172,13 @@ export default function ClipSearch() {
                 <h2>🔍 以圖搜頁</h2>
                 <p>在 PDF 中以圖片搜尋最相似頁面（基於 CLIP 模型）</p>
             </div>
+
+            {clipMissing && (
+                <div className="model-warning">
+                    <span className="warning-icon">⚠️</span>
+                    <span>目前處於離線模式，CLIP 模型尚未下載至本機。請先在有網路的環境中啟動系統並執行一次搜尋以下載模型，之後即可離線使用。</span>
+                </div>
+            )}
 
             {!processing && results.length === 0 && !hasSearched && (
                 <div className="clip-layout">

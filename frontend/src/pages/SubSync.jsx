@@ -1,6 +1,7 @@
-import { fetchWithAuth } from '../utils/api';
+﻿import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useNetwork } from '../context/NetworkContext.jsx'
 
 // ── 載入 YouTube IFrame API ──
 let ytApiReady = false
@@ -61,6 +62,9 @@ function formatTime(seconds) {
 }
 
 export default function SubSync() {
+    const { offline, isModelCached } = useNetwork()
+    const asrMissing = offline && (!isModelCached('asr_1.7b') || !isModelCached('forced_aligner'))
+
     // ── 狀態 ──
     const [inputType, setInputType] = useState('youtube') // 'youtube' | 'local'
     const [url, setUrl] = useState('')
@@ -688,6 +692,13 @@ export default function SubSync() {
                 <h2>🎬 SubSync</h2>
                 <p>影音字幕同步器 — 輸入 YouTube 網址，AI 自動產生同步字幕</p>
             </div>
+
+            {asrMissing && (
+                <div className="model-warning">
+                    <span className="warning-icon">⚠️</span>
+                    <span>目前處於離線模式，ASR 模型尚未下載至本機。請先在有網路的環境中啟動系統並執行一次辨識以下載模型，之後即可離線使用。</span>
+                </div>
+            )}
 
             {/* ── 輸入階段 ── */}
             {phase === 'input' && (

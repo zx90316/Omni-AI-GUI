@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useNetwork } from '../context/NetworkContext.jsx';
 import './Semantic.css';
 
 export default function Semantic() {
     const { token } = useAuth();
+    const { offline, isModelCached } = useNetwork();
+    const semanticMissing = offline && (!isModelCached('bge_reranker') || !isModelCached('bge_embedding'));
     const [activeTab, setActiveTab] = useState('embed'); // 'embed' or 'rerank'
 
     // Embedding State
@@ -108,6 +111,16 @@ export default function Semantic() {
             <header className="page-header">
                 <h2>Semantic Workshop (語意工坊)</h2>
                 <p>提供基於 BGE 模型的文本向量化 (Embedding) 與 相關度重排序 (Reranking)。</p>
+            </header>
+
+            {semanticMissing && (
+                <div className="model-warning">
+                    <span className="warning-icon">⚠️</span>
+                    <span>目前處於離線模式，BGE 語意模型尚未下載至本機。請先在有網路的環境中啟動系統以自動下載模型，之後即可離線使用。</span>
+                </div>
+            )}
+
+            <div style={{ marginTop: 'var(--space-md)' }}>
                 <div className="tab-buttons">
                     <button
                         className={`tab-btn ${activeTab === 'embed' ? 'active' : ''}`}
@@ -122,7 +135,7 @@ export default function Semantic() {
                         Reranking 語意重排序
                     </button>
                 </div>
-            </header>
+            </div>
 
             <div className="semantic-content">
                 {activeTab === 'embed' && (

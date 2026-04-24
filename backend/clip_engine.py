@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 CLIP 以圖搜頁引擎 — 使用 openai/clip-vit-large-patch14 比對 PDF 頁面與參考圖片
 支援 image-image 相似度 + text-image 加權過濾、閾值篩選、Top-K 排序
@@ -29,21 +29,32 @@ _device = None
 
 
 def load_clip_model():
-    """懶載入 CLIP 模型 (singleton)"""
+    """懶載入 CLIP 模型 (singleton)，含離線保護"""
     global _clip_model, _clip_processor, _device
 
     if _clip_model is not None:
         return _clip_model, _clip_processor
 
     from transformers import CLIPModel, CLIPProcessor
+    from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
 
     model_name = "openai/clip-vit-large-patch14"
+
+    if is_offline_mode() and not is_model_cached(model_name):
+        raise RuntimeError(make_offline_error_message(model_name))
+
     print(f"[CLIP] 正在載入模型 {model_name} ...")
 
     _device = "cuda" if torch.cuda.is_available() else "cpu"
-    _clip_model = CLIPModel.from_pretrained(model_name).to(_device)
-    _clip_model.eval()
-    _clip_processor = CLIPProcessor.from_pretrained(model_name)
+    try:
+        _clip_model = CLIPModel.from_pretrained(model_name).to(_device)
+        _clip_model.eval()
+        _clip_processor = CLIPProcessor.from_pretrained(model_name)
+    except (OSError, ConnectionError, Exception) as e:
+        err_str = str(e).lower()
+        if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):
+            raise RuntimeError(make_offline_error_message(model_name)) from e
+        raise
 
     print(f"[CLIP] 模型已載入至 {_device}")
     return _clip_model, _clip_processor

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+﻿import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import TaskList from './pages/TaskList.jsx'
 import NewTask from './pages/NewTask.jsx'
 import TaskDetail from './pages/TaskDetail.jsx'
@@ -11,12 +11,24 @@ import VectorExtractor from './pages/VectorExtractor.jsx'
 import Semantic from './pages/Semantic.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
+import { useNetwork } from './context/NetworkContext.jsx'
+
+function OfflineBanner() {
+    const { offline } = useNetwork()
+    if (!offline) return null
+    return (
+        <div className="offline-banner">
+            目前處於離線模式 — 僅已下載的模型功能可正常使用
+        </div>
+    )
+}
 
 function Layout({ children }) {
     const { token, role, ownerId, logout } = useAuth()
 
     return (
         <div className="app-layout">
+            <OfflineBanner />
             <aside className="sidebar">
                 <div className="sidebar-brand">
                     <h1>Omni AI</h1>

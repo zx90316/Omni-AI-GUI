@@ -1,8 +1,11 @@
-import { fetchWithAuth } from '../utils/api';
+﻿import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useNetwork } from '../context/NetworkContext.jsx'
 
 export default function NewTask() {
+    const { offline, isModelCached } = useNetwork()
+    const asrMissing = offline && (!isModelCached('asr_1.7b') || !isModelCached('forced_aligner'))
     const [config, setConfig] = useState(null)
     const [file, setFile] = useState(null)
     const [model, setModel] = useState('')
@@ -79,6 +82,13 @@ export default function NewTask() {
                 <h2>➕ 新增任務</h2>
                 <p>上傳音訊檔案並設定辨識參數</p>
             </div>
+
+            {asrMissing && (
+                <div className="model-warning">
+                    <span className="warning-icon">⚠️</span>
+                    <span>目前處於離線模式，ASR 模型尚未下載至本機。請先在有網路的環境中啟動系統並執行一次辨識以下載模型，之後即可離線使用。</span>
+                </div>
+            )}
 
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 {/* 上傳區域 */}
