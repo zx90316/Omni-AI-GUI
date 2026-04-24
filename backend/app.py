@@ -19,7 +19,7 @@ from backend.routers.workflow import router as workflow_router
 from backend.routers.semantic import router as semantic_router
 from backend.routers.system import router as system_router
 from backend.semantic_engine import init_semantic_models, start_worker, stop_worker_and_cleanup
-from backend.network_utils import check_huggingface_reachable, set_hf_offline_env
+from backend.network_utils import check_huggingface_reachable, set_hf_offline_env, unset_hf_offline_env
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,14 @@ async def startup():
     """啟動時初始化資料庫、偵測網路狀態並啟動語意模型背景程序"""
     init_db()
 
-    if not check_huggingface_reachable():
-        set_hf_offline_env()
-        logger.warning("HuggingFace Hub 不可達，已自動切換至離線模式")
+    # 先設離線模式，避免載入模型時因代理逾時卡住
+    set_hf_offline_env()
+
+    if check_huggingface_reachable():
+        unset_hf_offline_env()
+        logger.info("HuggingFace Hub 連線正常，已解除離線模式")
     else:
-        logger.info("HuggingFace Hub 連線正常")
+        logger.warning("HuggingFace Hub 不可達，維持離線模式")
 
     import asyncio
     
