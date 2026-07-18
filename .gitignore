@@ -21,3 +21,4 @@ frontend/node_modules
 ffmpeg-master-latest-win64-gpl-shared
 omni_ai.db
 _internal/
+.pnpm-store/
