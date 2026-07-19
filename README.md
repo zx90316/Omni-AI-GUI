@@ -45,7 +45,7 @@ Manager 的「安裝/更新 → 模型管理」會列出所有本機 AI 模型�
   ```env
   HF_TOKEN=hf_your_token_here
   ```
-- **ASR**：預設使用 60 秒低能量邊界切段、官方 HF-native 轉錄與 `Qwen3-ForcedAligner-0.6B-hf`。可用 `ASR_MAX_NEW_TOKENS` 調整每段輸出上限；相容環境可另行安裝 FlashAttention 並設 `ASR_ATTN_IMPLEMENTATION=flash_attention_2`。
+- **ASR**：預設使用 60 秒低能量邊界切段、官方 HF-native 轉錄與 `Qwen3-ForcedAligner-0.6B-hf`。長音訊以串流方式偵測靜音，任務支援安全取消與逾時保護；精確對齊失敗時會保留轉錄並明確標示近似時間戳。可用 `ASR_MAX_NEW_TOKENS`、`ASR_MAX_UPLOAD_MB`、`ASR_TASK_TIMEOUT_SECONDS` 調整限制；相容環境可另行安裝 FlashAttention 並設 `ASR_ATTN_IMPLEMENTATION=flash_attention_2`。
 - **OCR**：預設 `OCR_PROVIDER=local`，首次使用會從 Hugging Face 下載 `zai-org/GLM-OCR`；完整文件的版面模式另會下載 PP-DocLayoutV3。正式或多人使用環境可把 `OCR_PROVIDER` 設為 `openai` 並以 `OCR_API_URL` 連接 vLLM/SGLang。Ollama 僅保留為相容選項。
 - **本地模型存放**：大部分模型使用 Hugging Face Hub 快取（可用 `HF_HUB_CACHE` 或 `HF_HOME` 改變位置）；PP-DocLayoutV3 使用 GLM-OCR 實際讀取的 PaddleX 快取（可用 `PADDLE_PDX_CACHE_HOME` 改變位置）。Manager 會區分「已存在、缺少、不完整」三種狀態。
 

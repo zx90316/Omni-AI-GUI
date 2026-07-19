@@ -338,11 +338,12 @@ export default function SubSync() {
                 videoEl.style.width = '100%'
                 videoEl.style.height = '100%'
                 videoEl.style.backgroundColor = '#000'
+                const token = encodeURIComponent(localStorage.getItem('token') || '')
 
                 if (taskType === 'local') {
-                    videoEl.src = `/api/tasks/media/${vid}`
+                    videoEl.src = `/api/tasks/media/${vid}?token=${token}`
                 } else {
-                    videoEl.src = `/api/youtube/media/${vid}`
+                    videoEl.src = `/api/youtube/media/${vid}?token=${token}`
                 }
 
                 playerRef.current = {

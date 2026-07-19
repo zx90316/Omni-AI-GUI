@@ -24,3 +24,5 @@ omni_ai.db
 _internal/
 .pnpm-store/
 .manager/
+.python-runtime/
+.python-*-embed-amd64.zip

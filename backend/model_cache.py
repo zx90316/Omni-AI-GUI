@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Pure-filesystem inspection of the Hugging Face Hub cache."""
 from dataclasses import asdict, dataclass
+import json
 import os
 from pathlib import Path
+import re
 from typing import Mapping
 
 
@@ -65,7 +67,73 @@ def _snapshot_is_usable(snapshot: Path) -> bool:
                 found_file = True
     except OSError:
         return False
-    return found_file
+    if not found_file:
+        return False
+
+    # Some Hugging Face pipelines reference component directories from YAML.
+    # A Windows symlink failure can leave the YAML and one component present,
+    # which previously looked "ready" even though inference could not start.
+    config_yaml = snapshot / "config.yaml"
+    if config_yaml.is_file():
+        try:
+            referenced = set(
+                re.findall(
+                    r"\$model/([A-Za-z0-9_.-]+)",
+                    config_yaml.read_text(encoding="utf-8"),
+                )
+            )
+            weight_suffixes = (
+                ".safetensors",
+                ".bin",
+                ".pt",
+                ".pth",
+                ".onnx",
+                ".npz",
+                ".pdparams",
+            )
+            for component in referenced:
+                component_path = snapshot / component
+                if not component_path.is_dir() or not any(
+                    item.is_file()
+                    and item.stat().st_size > 0
+                    and item.name.lower().endswith(weight_suffixes)
+                    for item in component_path.rglob("*")
+                ):
+                    return False
+        except (OSError, UnicodeError):
+            return False
+    return True
+
+
+def _snapshot_has_complete_weights(snapshot: Path) -> bool:
+    """Verify weight files referenced by an index, or one standalone weight file."""
+    try:
+        indexes = list(snapshot.glob("*.index.json"))
+        if indexes:
+            for index_path in indexes:
+                try:
+                    payload = json.loads(index_path.read_text(encoding="utf-8"))
+                    filenames = set(payload.get("weight_map", {}).values())
+                except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+                    continue
+                if filenames and all(
+                    (snapshot / filename).is_file()
+                    and (snapshot / filename).stat().st_size > 0
+                    for filename in filenames
+                ):
+                    return True
+            return False
+
+        return any(
+            item.is_file()
+            and item.stat().st_size > 0
+            and item.name.lower().endswith(
+                (".safetensors", ".bin", ".pt", ".pth", ".onnx", ".pdparams")
+            )
+            for item in snapshot.rglob("*")
+        )
+    except OSError:
+        return False
 
 
 def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCacheStatus:
@@ -109,7 +177,7 @@ def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCa
         detail = "快取不完整：找不到可用 snapshot" if snapshots else "下載尚未完成"
         return ModelCacheStatus(model_id, "partial", False, detail, size_bytes=size_bytes)
 
-    if incomplete:
+    if incomplete and not _snapshot_has_complete_weights(selected):
         return ModelCacheStatus(
             model_id,
             "partial",
@@ -135,7 +203,11 @@ def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCa
         model_id,
         "ready",
         True,
-        "已下載且 snapshot 可讀",
+        (
+            f"已下載且 snapshot 可讀（忽略 {len(incomplete)} 個未引用暫存檔）"
+            if incomplete
+            else "已下載且 snapshot 可讀"
+        ),
         revision,
         str(selected),
         size_bytes,

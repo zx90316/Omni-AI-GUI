@@ -9,6 +9,8 @@ from backend.network_utils import (
     get_all_models_status,
     is_offline_mode,
 )
+from backend.asr_engine import get_asr_runtime_status
+from backend.config import ASR_MAX_UPLOAD_MB, ASR_TASK_TIMEOUT_SECONDS
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -29,4 +31,12 @@ def system_status():
     """
     online = refresh_online_status()
     models = get_all_models_status()
-    return {"online": online, "models": models}
+    return {
+        "online": online,
+        "models": models,
+        "asr": {
+            **get_asr_runtime_status(),
+            "task_timeout_seconds": ASR_TASK_TIMEOUT_SECONDS,
+            "max_upload_mb": ASR_MAX_UPLOAD_MB,
+        },
+    }

@@ -55,6 +55,11 @@ def _probe_python(command: list[str]) -> tuple[int, int] | None:
 def _find_project_python() -> tuple[list[str], tuple[int, int]] | None:
     """Prefer the Qwen-recommended Python 3.12, then 3.10-3.13."""
     candidates: list[list[str]] = []
+    local_runtime = PROJECT_ROOT / ".python-runtime" / (
+        "python.exe" if sys.platform == "win32" else "bin/python"
+    )
+    if local_runtime.is_file():
+        candidates.append([str(local_runtime)])
     if not getattr(sys, "frozen", False):
         candidates.append([sys.executable])
     py_launcher = shutil.which("py")

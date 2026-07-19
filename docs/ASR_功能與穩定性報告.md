@@ -8,7 +8,7 @@
 
 偶發失敗最可能的主因不是辨識模型本身，而是原本的任務執行方式：所有任務共用同一組 `converted.wav` / `chunk_*.wav`，背景執行緒又可同時載入 ASR 與 diarization 模型。兩個任務重疊時，會出現檔案互刪、讀到半成品或 GPU VRAM 競爭，完全符合「平常成功、偶爾失敗」的表現。
 
-本次已完成針對性的低風險修正，包括工作目錄隔離、單程序運算鎖、片段重試、失敗資源清理、進度容錯、重啟恢復、SSE 資料庫 fallback、YouTube 下載隔離與長音訊記憶體最佳化。另依 Qwen 官方新模型卡，從舊 `qwen-asr==0.0.6` 封裝改為 Transformers-native `Qwen3-ASR-*-hf` 與 `Qwen3-ForcedAligner-0.6B-hf`。這使 ASR 和 GLM-OCR 能安全共用新版 Transformers，不再有 4.57.6 與 5.3+ 的硬衝突。
+本次已完成針對性的低風險修正，包括工作目錄隔離、單程序運算鎖、片段重試、失敗資源清理、進度容錯、重啟恢復、SSE 資料庫 fallback、YouTube 下載隔離、長音訊串流分析、合作式取消、全流程逾時、串流上傳限制與對齊降級。另依 Qwen 官方新模型卡，從舊 `qwen-asr==0.0.6` 封裝改為 Transformers-native `Qwen3-ASR-*-hf` 與 `Qwen3-ForcedAligner-0.6B-hf`。這使 ASR 和 GLM-OCR 能安全共用新版 Transformers，不再有 4.57.6 與 5.3+ 的硬衝突。
 
 ## 2. 現行功能設計
 
@@ -53,10 +53,15 @@
 | P1 | 服務重啟後記憶體進度消失，DB 任務仍是 processing | 前端 SSE 永久等待，任務看似卡死 | 已修正：啟動時標記中斷，SSE 改用 DB fallback |
 | P1 | 同一 YouTube 影片重複提交會共用下載檔 | 下載／轉檔互相覆寫或刪除 | 已修正：task-id 專屬下載目錄 |
 | P2 | 所有 CUDA GPU 一律使用 bfloat16 | 不支援 BF16 的 GPU 在推論期失敗 | 已修正：BF16 capability 檢查，否則 FP16 |
-| P2 | 長音訊切片前再次整段載入記憶體 | 長錄音 RAM 峰值過高，可能被系統終止 | 已改善：切片改為 seek/read；靜音偵測仍為整段讀取 |
+| P2 | 長音訊靜音分析與切片載入整段音訊 | 長錄音 RAM 峰值過高，可能被系統終止 | 已修正：靜音分析採固定大小串流 block，切片採 seek/read |
 | P2 | 單次暫時性推論錯誤立即讓整個任務失敗 | CUDA/decoder 短暫異常沒有恢復機會 | 已修正：每片段最多 2 次嘗試 |
 | P2 | 音訊檔沒有音軌時只會出現索引錯誤；resampler 尾端未 flush | 錯誤難理解或尾端極短內容被截斷 | 已修正 |
 | P2 | YouTube 流程沒有保存 `raw_text` | YouTube 任務的「原始 ASR」結果為空 | 已修正 |
+| P2 | 任務排隊或生成階段無法取消、無總逾時 | 任務永久 processing，後續任務一起等待 | 已修正：共享取消事件、鎖等待輪詢、生成停止條件與四小時預設逾時 |
+| P2 | 上傳沒有大小與副檔名限制 | 超大或非媒體資料占滿磁碟，錯誤延後到背景工作 | 已修正：白名單、2 GiB 預設上限、串流寫入與半成品清理 |
+| P2 | Forced Aligner 單點失敗會丟棄已完成轉錄 | 有文字但整個任務仍失敗 | 已改善：保留轉錄、產生近似時間戳並在 UI 明確警告 |
+| P2 | 受保護的本機媒體 URL 未帶登入權杖 | 任務完成但 `<video>` 播放回傳 401 | 已修正：媒體 URL 帶入 URL-encoded token，後端仍驗證擁有者 |
+| P1 | Transformers 對 Windows 檔案路徑改用 TorchCodec | libtorchcodec / FFmpeg ABI 不相容，模型載入成功但每次轉錄都失敗 | 已修正：以 soundfile 解碼 16 kHz waveform，ASR 與 aligner 共用 NumPy 音訊 |
 | P3 | 背景錯誤只有字串，沒有 traceback | 偶發故障難以定位 | 已修正：後端 logger 保留 stack trace |
 
 ## 4. 本次程式碼最佳化
@@ -76,11 +81,17 @@
 - 進度 callback 失敗不再影響核心辨識。
 - GPU dtype 依 BF16 支援度選擇 BF16 或 FP16。
 - 只有真正完成才回報完成；失敗不會先送出 100%。
+- 全域鎖改為輪詢取得，排隊期間也能取消或逾時。
+- Transformers generation 加入停止條件，避免只在片段完成後才響應取消。
+- 靜音偵測改為約 10 秒的 `SoundFile.blocks` 串流與 NumPy 向量化 RMS。
+- Forced Aligner 失敗時產生可用的近似時間戳，並把降級狀態寫入結果警告。
+- 轉錄輸入改為 `soundfile` 解碼後的 contiguous float32 waveform，避開 Windows TorchCodec native DLL，且 ASR / aligner 不重複解碼。
 
 ### `backend/audio_utils.py`
 
 - 對無音軌媒體提供明確錯誤。
 - flush resampler 尾端樣本，避免輸出 WAV 尾端截短。
+- 解碼每個 frame 時檢查取消事件，長影片轉檔不再無法中止。
 
 ### 任務路由與資料庫
 
@@ -91,6 +102,13 @@
 - 程序啟動時將上一次遺留的 pending / processing 任務標記為中斷失敗。
 - 終態持久化後移除進度記憶體快取，避免長期累積。
 - YouTube 下載、結果保存與暫存清理補強。
+- 本地與 YouTube 任務新增 idempotent cancel API、`cancelling` / `cancelled` 終態，以及重啟後的取消狀態恢復。
+- 上傳改為分塊寫入，限制副檔名、空檔與總大小；任何錯誤都移除半成品。
+- YouTube 下載加入 socket timeout、重試、fragment retry 與下載進度取消檢查。
+- `/api/system/status` 回報 ASR busy、受控任務數、逾時與上傳限制，便於現場診斷。
+- 活躍任務禁止直接刪除；媒體取得同時驗證任務擁有者，避免跨使用者讀取。
+- Manager 模型下載進度在 snapshot 驗證前最多顯示 99%，避免 Windows 下載／重建 byte 雙計數造成假完成。
+- 模型 cache 以完整 snapshot 權重及 sharded index 判定可用性，不再被未引用的 stale `.incomplete` 暫存檔誤判。
 
 ## 5. 驗證結果
 
@@ -99,22 +117,38 @@
 - `py_compile`：ASR engine、audio utils、database、app、兩個任務 router 與新增測試皆通過。
 - `tests/test_split.py` 已更新為目前的字元級 API；標點分句與無標點 50 字強制切分通過。
 - 既有 `tests/test_merge.py`：語者分派、標點還原與語者歸組通過。
-- 新增 `tests/test_asr_stability.py`：
+- `tests/test_asr_stability.py` 與 `tests/test_asr_api.py` 共 14 項全部通過：
   - 兩個 concurrent run 實際被序列化。
   - 每個 run 使用不同暫存目錄，完成後目錄被清除。
   - 進度 callback 例外不會中止 ASR。
   - 第一次片段推論失敗後會重試並成功。
   - HF-native 轉錄、parsed decode、Forced Aligner 輸入與時間戳 decode 契約正確。
+  - 鎖等待中的取消與逾時會正確結束。
+  - 取消 API 可重複呼叫，活躍任務不可直接刪除。
+  - 非支援、空白與超限上傳都會拒絕且不殘留檔案。
+  - 媒體端點會阻止其他使用者存取。
+  - 130 秒 WAV 的靜音分析採串流處理並找到正確邊界。
+  - 對齊降級仍保留文字 token 與完整音訊時間範圍。
 - 完整 `pip install --dry-run --ignore-installed -r requirements.txt` 成功：解析為 Torch 2.10/cu128、官方 Transformers commit（`5.15.0.dev0`）與 `glmocr==0.1.5`，未再發生依賴衝突。
+- Manager lifecycle 16 項、模型管理 17 項、OCR 11 項單元測試全部通過。
+- 完整 `unittest discover` 共 58 項測試全部通過；FastAPI 啟停已遷移至 lifespan，Pydantic schema example 也已改為 v2 相容寫法，消除既有框架棄用警告。
+- Vite production build 通過（57 modules transformed）。
+- 實際啟動 Uvicorn 後，`/health/live`、`/health/ready`、`/api/system/status` 均回傳 200；ASR 狀態為 idle、0 tracked tasks、4 小時 timeout、2 GiB upload limit。
+- 官方 `Qwen3-ASR-1.7B-hf`、`Qwen3-ASR-0.6B-hf`、`Qwen3-ForcedAligner-0.6B-hf` 與 gated `speaker-diarization-community-1` 已下載並通過本機離線 snapshot 驗證。
+- 真實 RTX 3090 CUDA 端到端測試通過：11.04 秒臺灣中文合成語音，33.61 秒內完成（含模型冷載入），產生 34 個字元時間戳與 2 個字幕段，時間範圍 0.08–10.32 秒，無降級警告。
+- 預設 1.7B 模型以同一音訊完成真實 CUDA 測試：40.95 秒（含模型冷載入），同樣產生 34 個時間戳、2 個字幕段與 0.08–10.32 秒範圍，無降級警告。
+- 真實 pyannote CUDA 測試通過：32.24 秒完成，辨識兩個語音區段並正確歸於同一位 `SPEAKER_00`。pyannote 雖警告 TorchCodec 不可用，但因 pipeline 接收預載 waveform，未影響推論。
+- 2 小時串流分析壓測通過：219.73 MiB、7200 秒 WAV 在 0.72 秒完成靜音掃描，產生 40 個合法片段且末端精確到 7200 秒，Python RSS 峰值僅增加 2.95 MiB。
+- 真實 YouTube 全鏈路通過：公開 19.01 秒影片由 yt-dlp 下載並透過 bundled FFmpeg 產生 3.65 MB WAV；0.6B ASR 於 24.58 秒完成英文轉錄，產生 4 個字幕段與 37 個對齊 token，無降級警告。
+- 真實 Transformers generation 取消測試通過：83.18 秒音訊在第二片段生成時觸發取消，48.29 秒結束並拋出帶階段資訊的 `ASRCancelledError`，未殘留任何 `results/work/asr_*` 工作目錄。
 - `git diff --check`：通過，只有 Git 的 LF/CRLF 提示。
 
-未完成：
+尚未執行：
 
-- 真實 Qwen3-ASR、ForcedAligner、pyannote 與 GPU 端到端測試。
-- 多小時音訊的 RAM / VRAM 壓力測試。
-- 真實 YouTube 下載與網路中斷重試測試。
+- 多小時「真實語音＋模型推論」的 GPU 時間與 VRAM 壓力測試（2 小時串流切片的 RAM 測試已完成）。
+- 人工注入下載中途斷線後的 yt-dlp 三次重試測試（真實正常網路下載與取消前置流程已驗證）。
 
-目前專案 `.venv/Scripts/python.exe` 仍存在，但其 launcher 指向已不存在的 `C:\Users\zx020\AppData\Local\Programs\Python\Python312\python.exe`；在重建虛擬環境前，無法用專案完整依賴執行上述整合測試。
+原本 `.venv/Scripts/python.exe` 的 launcher 指向已被移除的系統 Python。官方安裝器因 Windows policy 1625 被拒後，已改用 Python.org 官方 3.12.10 embeddable runtime（MD5 與 Python Software Foundation 簽章均驗證）作為專案本機 base runtime；目前 Manager 判定 `.venv` 健康，FastAPI、Torch 2.10.0+cu128、CUDA 與 Transformers 5.15.0.dev0 均可直接載入。`.python-runtime/` 屬機器本機資產並已加入 Git ignore。
 
 Manager 現在會實際執行 `.venv` Python 檢查健康狀態，而非只判斷檔案是否存在；建立環境時優先選 Python 3.12，並可重建這類已失效環境。
 
@@ -133,13 +167,11 @@ Manager 現在會實際執行 `.venv` Python 檢查健康狀態，而非只判�
 
 ## 7. 尚存風險與建議順序
 
-1. **先重建 `.venv` 並做真實壓力測試。** 建議至少測試短 WAV、空白音訊、無音軌 MP4、2 小時錄音、兩個同時提交的任務、開關 diarization，以及中途重啟後端。
-2. **加入任務取消與 watchdog timeout。** 現在模型若底層永久卡住，沒有取消或逾時機制；全域鎖後的其他任務也會一起等待。
-3. **把背景 daemon thread 升級成 durable worker queue。** 目前重啟只能把任務標失敗，不能續跑；若需正式長時間服務，建議採單一 GPU worker + 持久佇列。
-4. **若未來開多個 Uvicorn workers，改用跨程序鎖。** 現在 manager 以單一 Uvicorn process 啟動，因此程序內鎖有效；多 worker 部署時需改成檔案鎖、Redis lock 或獨立 GPU worker。
-5. **降低靜音分析的 RAM 使用量。** `split_audio_by_silence` 目前仍整段讀取音訊，可再改成 streaming blocks。
-6. **加入結構化監控。** 建議每任務記錄 task id、stage、attempt、audio duration、device、dtype、模型載入秒數、推論秒數、峰值 VRAM 與錯誤類型，才能量化偶發失敗率。
-7. **補上上傳限制與內容驗證。** 後端目前缺少明確的檔案大小上限與 MIME/副檔名白名單，超大或非媒體檔會把錯誤延後到背景任務。
+1. **執行長音訊模型推論與多人語音壓力測試。** `.venv`、1.7B / 0.6B ASR、aligner 與 pyannote 現已可用，2 小時切片 RAM 壓測也已通過；仍建議以真實 2 小時語音測量 GPU 總時間與峰值 VRAM，並測試多人語音、開關 diarization、兩個同時提交的任務，以及中途重啟後端。
+2. **把背景 daemon thread 升級成 durable worker queue。** 目前重啟會把中斷任務轉為明確終態，但不能續跑；正式長時間服務建議採單一 GPU worker + 持久佇列。
+3. **若未來開多個 Uvicorn workers，改用跨程序鎖。** 現在 Manager 以單一 Uvicorn process 啟動，因此程序內鎖有效；多 worker 部署時需改成檔案鎖、Redis lock 或獨立 GPU worker。
+4. **加入結構化監控。** 建議每任務記錄 task id、stage、attempt、audio duration、device、dtype、模型載入秒數、推論秒數、峰值 VRAM、是否使用近似時間戳與錯誤類型，才能量化偶發失敗率。
+5. **評估更強的內容型別檢查。** 現在已有副檔名白名單與 PyAV 解碼驗證；若部署在公開網路，可再於寫入前檢查 magic bytes 或使用惡意內容掃描服務。
 
 ## 8. 建議驗收標準
 

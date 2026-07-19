@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 _ASR_RUN_LOCK = threading.Lock()
 
 
+def get_asr_runtime_status() -> Dict[str, Any]:
+    """Return process-local ASR scheduler state without loading ML dependencies."""
+    from backend.asr_control import active_control_count
+
+    return {
+        "busy": _ASR_RUN_LOCK.locked(),
+        "tracked_tasks": active_control_count(),
+    }
+
+
 class ASRCancelledError(RuntimeError):
     """Raised when a user cooperatively cancels an ASR task."""
 
@@ -372,12 +382,29 @@ class ASREngine:
 
     def _transcribe_single(self, audio_path: str, language: Optional[str] = "Chinese"):
         """Use the official Transformers-native ASR and forced-aligner flow."""
+        import numpy as np
+        import soundfile as sf
         import torch
 
         self._check_interrupted("ASR 輸入準備")
 
+        # Passing a Windows file path makes Transformers load TorchCodec, whose
+        # native DLL frequently fails when its FFmpeg/PyTorch ABI differs. Our
+        # pipeline already guarantees 16 kHz PCM WAV, so decode it once with
+        # soundfile and reuse the waveform for ASR and forced alignment.
+        waveform, sample_rate = sf.read(
+            audio_path,
+            dtype="float32",
+            always_2d=True,
+        )
+        if sample_rate != 16000:
+            raise ValueError(f"ASR 音訊取樣率必須為 16000 Hz，目前為 {sample_rate} Hz")
+        if waveform.size == 0:
+            raise ValueError("ASR 音訊沒有可辨識的樣本")
+        waveform = np.ascontiguousarray(waveform.mean(axis=1), dtype=np.float32)
+
         inputs = self._processor.apply_transcription_request(
-            audio=str(audio_path),
+            audio=waveform,
             language=language or None,
         ).to(self._model.device, self._model.dtype)
         generation_kwargs = {
@@ -418,7 +445,7 @@ class ASREngine:
             try:
                 self._check_interrupted("時間對齊輸入準備")
                 aligner_inputs, word_lists = self._aligner_processor.prepare_forced_aligner_inputs(
-                    audio=str(audio_path),
+                    audio=waveform,
                     transcript=text,
                     language=detected_language,
                 )

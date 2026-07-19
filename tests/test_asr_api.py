@@ -4,16 +4,28 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+import soundfile as sf
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from starlette.exceptions import StarletteDeprecationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"Using `httpx` with `starlette\.testclient` is deprecated.*",
+    category=StarletteDeprecationWarning,
+)
+
+from starlette.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.asr_control import clear_cancel_event
+from backend.asr_engine import ASREngine
 from backend.auth_utils import get_current_user
 from backend.database import Base, Task, get_db
 from backend.routers import tasks as tasks_router
@@ -137,6 +149,30 @@ class ASRApiTests(unittest.TestCase):
 
         with self.Session() as db:
             self.assertEqual(db.get(Task, task_id).status, "cancelling")
+
+    def test_long_audio_silence_detection_streams_and_finds_boundaries(self):
+        sample_rate = 1000
+        duration = 130
+        audio = np.full(sample_rate * duration, 0.1, dtype=np.float32)
+        audio[58 * sample_rate:62 * sample_rate] = 0.0
+        audio[118 * sample_rate:122 * sample_rate] = 0.0
+        audio_path = self.upload_dir / "long.wav"
+        sf.write(audio_path, audio, sample_rate)
+
+        engine = ASREngine.__new__(ASREngine)
+        engine.on_progress = lambda percent, message: None
+        engine.should_cancel = lambda: False
+        engine._deadline = None
+        chunks = engine.split_audio_by_silence(
+            str(audio_path),
+            target_duration=60,
+            max_duration=90,
+        )
+
+        self.assertEqual(len(chunks), 3)
+        self.assertAlmostEqual(chunks[0][1], 60.0, delta=1.0)
+        self.assertAlmostEqual(chunks[1][1], 120.0, delta=1.0)
+        self.assertEqual(chunks[-1][1], 130.0)
 
 
 if __name__ == "__main__":

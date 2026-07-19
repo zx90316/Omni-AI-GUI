@@ -10,6 +10,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 sys.path.insert(0, ".")
 
 from backend.asr_control import (
@@ -72,6 +74,7 @@ class ASRStabilityTests(unittest.TestCase):
 
         class FakeTensor:
             shape = (1, 3)
+            device = "cuda:0"
 
             def __getitem__(self, key):
                 observed["generated_slice"] = key
@@ -125,6 +128,19 @@ class ASRStabilityTests(unittest.TestCase):
 
         fake_torch = types.ModuleType("torch")
         fake_torch.inference_mode = nullcontext
+        fake_torch.bool = "bool"
+        fake_torch.full = lambda shape, value, **kwargs: (shape, value, kwargs)
+
+        fake_transformers = types.ModuleType("transformers")
+
+        class FakeStoppingCriteria:
+            pass
+
+        class FakeStoppingCriteriaList(list):
+            pass
+
+        fake_transformers.StoppingCriteria = FakeStoppingCriteria
+        fake_transformers.StoppingCriteriaList = FakeStoppingCriteriaList
 
         engine = ASREngine.__new__(ASREngine)
         engine._processor = FakeASRProcessor()
@@ -132,22 +148,59 @@ class ASRStabilityTests(unittest.TestCase):
         engine._aligner_processor = FakeAlignerProcessor()
         engine._aligner_model = FakeAlignerModel()
         engine.max_new_tokens = 512
+        engine.should_cancel = lambda: False
+        engine.timeout_seconds = 60
+        engine._deadline = time.monotonic() + 60
 
-        with patch.dict(sys.modules, {"torch": fake_torch}):
+        fake_soundfile = types.ModuleType("soundfile")
+        fake_soundfile.read = lambda *args, **kwargs: (
+            np.array([[0.1], [0.2]], dtype=np.float32),
+            16000,
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "torch": fake_torch,
+                "transformers": fake_transformers,
+                "soundfile": fake_soundfile,
+            },
+        ):
             results = engine._transcribe_single("sample.wav", "Chinese")
 
         self.assertEqual(results[0].language, "Chinese")
         self.assertEqual(results[0].text, "測試文字")
         self.assertEqual([item.text for item in results[0].time_stamps], ["測", "試"])
-        self.assertEqual(
-            observed["transcription_request"],
-            {"audio": "sample.wav", "language": "Chinese"},
-        )
+        transcription_audio = observed["transcription_request"]["audio"]
+        self.assertIsInstance(transcription_audio, np.ndarray)
+        self.assertEqual(transcription_audio.dtype, np.float32)
+        np.testing.assert_allclose(transcription_audio, [0.1, 0.2])
+        self.assertEqual(observed["transcription_request"]["language"], "Chinese")
         self.assertEqual(observed["decode_format"], "parsed")
         self.assertEqual(observed["generate"]["max_new_tokens"], 512)
         self.assertFalse(observed["generate"]["do_sample"])
+        criteria = observed["generate"]["stopping_criteria"]
+        self.assertIsInstance(criteria, FakeStoppingCriteriaList)
+        self.assertEqual(
+            criteria[0](FakeTensor(), None),
+            ((1,), False, {"device": "cuda:0", "dtype": "bool"}),
+        )
         self.assertEqual(observed["aligner_request"]["transcript"], "測試文字")
+        self.assertIs(observed["aligner_request"]["audio"], transcription_audio)
         self.assertEqual(observed["alignment_decode"]["timestamp_token_id"], 99)
+
+    def test_approximate_timestamps_preserve_text_tokens_and_duration(self):
+        fake_soundfile = types.ModuleType("soundfile")
+        fake_soundfile.info = lambda path: types.SimpleNamespace(duration=4.0)
+        with patch.dict(sys.modules, {"soundfile": fake_soundfile}):
+            timestamps = ASREngine._approximate_timestamps(
+                "你好，hello world!",
+                "sample.wav",
+            )
+
+        self.assertEqual([item.text for item in timestamps], ["你", "好", "hello", "world"])
+        self.assertEqual(timestamps[0].start_time, 0.0)
+        self.assertEqual(timestamps[-1].end_time, 4.0)
 
     def test_concurrent_runs_are_serialized_and_use_isolated_workspaces(self):
         active = 0

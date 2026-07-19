@@ -4,7 +4,9 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 import threading
 import time
 
@@ -35,8 +37,15 @@ class _DownloadProgress:
             self.emit()
 
     def emit(self, *, force_complete: bool = False) -> None:
-        completed = self.total if force_complete and self.total else self.completed
-        percent = min(100.0, completed / self.total * 100) if self.total else None
+        if self.total:
+            completed = self.total if force_complete else min(self.completed, self.total)
+            # Hugging Face may report both downloaded and reconstructed bytes on
+            # Windows. Reserve 100% for the verified local snapshot so the UI
+            # never claims completion while reconstruction is still running.
+            percent = 100.0 if force_complete else min(99.0, completed / self.total * 100)
+        else:
+            completed = self.completed
+            percent = None
         emit_event(
             "progress",
             model_id=self.model_id,
@@ -55,6 +64,21 @@ def _load_project_env() -> None:
         pass
 
 
+def _snapshot_root_from_plan(plan) -> Path | None:
+    """Resolve the cache snapshot root from Hugging Face dry-run metadata."""
+    for item in plan or []:
+        commit_hash = str(getattr(item, "commit_hash", "") or "")
+        local_path = getattr(item, "local_path", None)
+        if not commit_hash or not local_path:
+            continue
+        current = Path(local_path)
+        while current != current.parent:
+            if current.name == commit_hash:
+                return current
+            current = current.parent
+    return None
+
+
 def download_model(model_id: str, max_workers: int = 4) -> Path:
     from huggingface_hub import snapshot_download
     from tqdm.auto import tqdm
@@ -63,6 +87,7 @@ def download_model(model_id: str, max_workers: int = 4) -> Path:
     token = os.environ.get("HF_TOKEN", "").strip() or None
     total = 0
     completed = 0
+    plan = []
     try:
         plan = snapshot_download(repo_id=model_id, token=token, dry_run=True)
         if isinstance(plan, list):
@@ -85,12 +110,38 @@ def download_model(model_id: str, max_workers: int = 4) -> Path:
             progress.advance(n or 0)
             return result
 
-    snapshot_path = snapshot_download(
-        repo_id=model_id,
-        token=token,
-        max_workers=max(1, max_workers),
-        tqdm_class=JsonProgressBar,
-    )
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=model_id,
+            token=token,
+            max_workers=max(1, max_workers),
+            tqdm_class=JsonProgressBar,
+        )
+    except OSError as exc:
+        snapshot_root = _snapshot_root_from_plan(plan)
+        if getattr(exc, "winerror", None) != 1314 or snapshot_root is None:
+            raise
+        emit_event(
+            "phase",
+            model_id=model_id,
+            phase="windows_copy_fallback",
+            message="Windows 不允許建立 symlink，改以普通檔案建立 snapshot",
+        )
+        with tempfile.TemporaryDirectory(prefix="omni_hf_snapshot_") as temp_dir:
+            local_path = snapshot_download(
+                repo_id=model_id,
+                token=token,
+                local_dir=temp_dir,
+                max_workers=max(1, max_workers),
+            )
+            snapshot_root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(
+                local_path,
+                snapshot_root,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(".cache"),
+            )
+        snapshot_path = str(snapshot_root)
     emit_event("phase", model_id=model_id, phase="verify", message="驗證本機 snapshot")
     verified_path = snapshot_download(
         repo_id=model_id,

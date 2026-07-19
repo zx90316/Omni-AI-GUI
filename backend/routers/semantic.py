@@ -25,10 +25,12 @@ router = APIRouter(
 class RerankRequest(BaseModel):
     pairs: List[List[str]] = Field(
         ...,
-        example=[
-            ['what is panda?', 'hi'],
-            ['what is panda?', 'The giant panda (Ailuropoda melanoleuca) is a bear species endemic to China.']
-        ],
+        json_schema_extra={
+            "example": [
+                ['what is panda?', 'hi'],
+                ['what is panda?', 'The giant panda (Ailuropoda melanoleuca) is a bear species endemic to China.']
+            ]
+        },
         description="需要計算分數的文本對列表，格式為 [query, document]"
     )
     normalize: bool = Field(
@@ -39,7 +41,7 @@ class RerankRequest(BaseModel):
 class EmbeddingRequest(BaseModel):
     sentences: List[str] = Field(
         ...,
-        example=['你好', '世界', 'Hello', 'World'],
+        json_schema_extra={"example": ['你好', '世界', 'Hello', 'World']},
         description="需要進行向量化的文本列表"
     )
 

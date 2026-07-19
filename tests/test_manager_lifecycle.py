@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from manager import config as manager_config
+from manager import env_manager
 from manager.process_manager import (
     ManagedProcess,
     ProcessManager,
@@ -84,6 +85,26 @@ class BootstrapLifecycleTests(unittest.TestCase):
             self.assertFalse(git_manager.git_pull(output.append))
         internet.assert_not_called()
         self.assertTrue(any("未提交變更" in line for line in output))
+
+
+class PythonEnvironmentLifecycleTests(unittest.TestCase):
+    def test_project_runtime_is_preferred_for_venv_rebuild(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / ".python-runtime" / (
+                "python.exe" if sys.platform == "win32" else "bin/python"
+            )
+            runtime.parent.mkdir(parents=True)
+            runtime.touch()
+
+            with (
+                patch.object(env_manager, "PROJECT_ROOT", root),
+                patch.object(env_manager, "_probe_python", return_value=(3, 12)),
+            ):
+                command, version = env_manager._find_project_python()
+
+        self.assertEqual(command, [str(runtime)])
+        self.assertEqual(version, (3, 12))
 
 
 class ManagedProcessLifecycleTests(unittest.TestCase):

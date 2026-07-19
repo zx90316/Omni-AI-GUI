@@ -4,6 +4,7 @@ FastAPI 應用入口
 """
 import logging
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,10 +26,22 @@ from backend.network_utils import check_huggingface_reachable, set_hf_offline_en
 
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(_application: FastAPI):
+    """Run the existing startup/shutdown lifecycle without deprecated events."""
+    await startup()
+    try:
+        yield
+    finally:
+        shutdown()
+
+
 app = FastAPI(
     title="Omni AI API",
     description="多模態語音/視覺/語意操作 API — 基於 Qwen / BGE / Clip",
     version="2.1.0",
+    lifespan=lifespan,
 )
 app.state.ready = False
 app.state.started_at = time.time()
@@ -58,7 +71,6 @@ app.include_router(semantic_router)
 app.include_router(system_router)
 
 
-@app.on_event("startup")
 async def startup():
     """啟動時初始化資料庫、偵測網路狀態並啟動語意模型背景程序"""
     app.state.ready = False
@@ -94,7 +106,6 @@ async def startup():
     asyncio.create_task(load_bge())
     app.state.ready = True
 
-@app.on_event("shutdown")
 def shutdown():
     app.state.ready = False
     stop_worker_and_cleanup()

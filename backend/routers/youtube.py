@@ -6,7 +6,6 @@ import asyncio
 import logging
 import re
 import threading
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -23,7 +22,6 @@ from backend.schemas import (
 )
 from backend.auth_utils import get_current_user
 
-import os
 import uuid
 import shutil
 
@@ -655,25 +653,51 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
     except ASRCancelledError as e:
         logger.info("YouTube ASR 任務 %s 已取消: %s", task_id, e)
         db.rollback()
+        terminal_persisted = False
         task = db.query(Task).filter(Task.id == task_id).first()
         if task is not None:
             task.status = "cancelled"
             task.error_message = None
             task.progress_message = "已取消"
             task.completed_at = datetime.now(timezone.utc)
-            db.commit()
-        _yt_progress_store.pop(task_id, None)
+            try:
+                db.commit()
+                terminal_persisted = True
+            except Exception:
+                db.rollback()
+                logger.exception("YouTube ASR 任務 %s 的取消狀態無法寫入資料庫", task_id)
+        if terminal_persisted:
+            _yt_progress_store.pop(task_id, None)
+        else:
+            _yt_progress_store[task_id] = {
+                "percent": 0,
+                "message": "已取消",
+                "done": True,
+            }
     except ASRTimeoutError as e:
         logger.error("YouTube ASR 任務 %s 逾時: %s", task_id, e)
         db.rollback()
+        terminal_persisted = False
         task = db.query(Task).filter(Task.id == task_id).first()
         if task is not None:
             task.status = "failed"
             task.error_message = str(e)
             task.progress_message = "處理逾時"
             task.completed_at = datetime.now(timezone.utc)
-            db.commit()
-        _yt_progress_store.pop(task_id, None)
+            try:
+                db.commit()
+                terminal_persisted = True
+            except Exception:
+                db.rollback()
+                logger.exception("YouTube ASR 任務 %s 的逾時狀態無法寫入資料庫", task_id)
+        if terminal_persisted:
+            _yt_progress_store.pop(task_id, None)
+        else:
+            _yt_progress_store[task_id] = {
+                "percent": 0,
+                "message": f"失敗: {e}",
+                "done": True,
+            }
     except Exception as e:
         logger.exception("YouTube ASR 任務 %s 失敗", task_id)
         db.rollback()
