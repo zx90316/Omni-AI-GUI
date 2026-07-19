@@ -31,7 +31,8 @@ export default function ClipOcrWorkflow() {
 
     // OCR 參數
     const [fields, setFields] = useState(() => DEFAULT_FIELDS.map(f => ({ ...f })))
-    const [model, setModel] = useState('glm-ocr')
+    const [provider, setProvider] = useState('local')
+    const [model, setModel] = useState('zai-org/GLM-OCR')
     const [maxRetries, setMaxRetries] = useState(3)
 
     // 狀態
@@ -146,6 +147,7 @@ export default function ClipOcrWorkflow() {
             formData.append('must_exclude', mustExclude)
             formData.append('threshold', String(threshold))
             formData.append('fields', JSON.stringify(fieldsDict))
+            formData.append('provider', provider)
             formData.append('model', model)
             formData.append('max_retries', String(maxRetries))
 
@@ -354,8 +356,16 @@ export default function ClipOcrWorkflow() {
 
                             <div className="ocr-options-row" style={{ marginTop: '16px' }}>
                                 <div className="form-group">
+                                    <label className="form-label">OCR 推論方式</label>
+                                    <select className="form-select" value={provider} onChange={e => setProvider(e.target.value)}>
+                                        <option value="local">專案內本機推論</option>
+                                        <option value="openai">vLLM / SGLang</option>
+                                        <option value="ollama">Ollama（相容）</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
                                     <label className="form-label">選擇模型</label>
-                                    <input type="text" className="form-input" value={model} onChange={e => setModel(e.target.value)} placeholder="glm-ocr" />
+                                    <input type="text" className="form-input" value={model} onChange={e => setModel(e.target.value)} placeholder="zai-org/GLM-OCR" />
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label">重試次數</label>

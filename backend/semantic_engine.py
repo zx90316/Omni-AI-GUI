@@ -299,7 +299,9 @@ def init_semantic_models():
         offline = is_offline_mode()
 
         # 1. Reranker
-        reranker_id = "BAAI/bge-reranker-v2-m3"
+        from backend.model_registry import MODEL_IDS
+
+        reranker_id = MODEL_IDS["bge_reranker"]
         logger.info(f"正在載入 Reranker 模型 {reranker_id} (若無快取將自動下載)...")
         try:
             if offline and not is_model_cached(reranker_id):
@@ -319,7 +321,7 @@ def init_semantic_models():
                 logger.error(f"Reranker 模型載入或下載失敗: {e}")
             
         # 2. Embedding
-        embedding_id = "BAAI/bge-m3"
+        embedding_id = MODEL_IDS["bge_embedding"]
         logger.info(f"正在載入 Embedding 模型 {embedding_id} (若無快取將自動下載)...")
         try:
             if offline and not is_model_cached(embedding_id):

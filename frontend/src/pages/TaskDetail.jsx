@@ -5,6 +5,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 const STATUS_MAP = {
     pending: { label: '等待中', className: 'badge-pending' },
     processing: { label: '處理中', className: 'badge-processing' },
+    cancelling: { label: '取消中', className: 'badge-processing' },
+    cancelled: { label: '已取消', className: 'badge-failed' },
     completed: { label: '已完成', className: 'badge-completed' },
     failed: { label: '失敗', className: 'badge-failed' },
 }
@@ -27,6 +29,7 @@ export default function TaskDetail() {
     const exportRef = useRef(null)
     const [maxSentenceChars, setMaxSentenceChars] = useState('30')
     const [resegmenting, setResegmenting] = useState(false)
+    const [cancelling, setCancelling] = useState(false)
 
     const fetchTask = async () => {
         try {
@@ -42,6 +45,25 @@ export default function TaskDetail() {
             console.error(err)
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleCancelAsr = async () => {
+        if (!id || cancelling) return
+        setCancelling(true)
+        try {
+            const response = await fetchWithAuth(`/api/tasks/${id}/cancel`, { method: 'POST' })
+            const data = await response.json()
+            if (!response.ok) throw new Error(data.detail || '取消任務失敗')
+            setTask(prev => prev ? {
+                ...prev,
+                status: data.status,
+                progress_message: data.message,
+            } : prev)
+        } catch (error) {
+            alert(error.message)
+        } finally {
+            setCancelling(false)
         }
     }
 
@@ -315,7 +337,7 @@ export default function TaskDetail() {
 
     // SSE 即時進度
     useEffect(() => {
-        if (!task || (task.status !== 'pending' && task.status !== 'processing')) return
+        if (!task || !['pending', 'processing', 'cancelling'].includes(task.status)) return
 
         const token = localStorage.getItem('token') || '';
         const evtSource = new EventSource(`/api/tasks/${id}/progress?token=${token}`)
@@ -386,7 +408,7 @@ export default function TaskDetail() {
 
     const status = STATUS_MAP[task.status] || STATUS_MAP.pending
     const isCompleted = task.status === 'completed'
-    const isProcessing = task.status === 'processing' || task.status === 'pending'
+    const isProcessing = ['pending', 'processing', 'cancelling'].includes(task.status)
 
     return (
         <div className="fade-in">
@@ -459,6 +481,30 @@ export default function TaskDetail() {
                             style={{ width: `${task.progress}%` }}
                         />
                     </div>
+                    <div style={{ marginTop: 'var(--space-md)', textAlign: 'right' }}>
+                        <button
+                            className="btn btn-danger btn-sm"
+                            onClick={handleCancelAsr}
+                            disabled={cancelling || task.status === 'cancelling'}
+                        >
+                            {task.status === 'cancelling' || cancelling ? '正在取消...' : '取消任務'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {task.status === 'cancelled' && (
+                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                    <p style={{ fontWeight: 600 }}>任務已安全取消</p>
+                    <p style={{ color: 'var(--color-text-muted)', marginTop: 'var(--space-sm)' }}>
+                        已釋放模型與暫存資源，可重新建立辨識任務。
+                    </p>
+                </div>
+            )}
+
+            {isCompleted && task.progress_message && task.progress_message !== '完成' && (
+                <div className="card" style={{ marginBottom: 'var(--space-lg)', borderColor: 'var(--color-warning)' }}>
+                    <p style={{ fontWeight: 600 }}>⚠️ {task.progress_message}</p>
                 </div>
             )}
 

@@ -1,0 +1,208 @@
+# -*- coding: utf-8 -*-
+"""Pure-filesystem inspection of the Hugging Face Hub cache."""
+from dataclasses import asdict, dataclass
+import os
+from pathlib import Path
+from typing import Mapping
+
+
+@dataclass(frozen=True)
+class ModelCacheStatus:
+    model_id: str
+    state: str
+    cached: bool
+    detail: str
+    revision: str | None = None
+    snapshot_path: str | None = None
+    size_bytes: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def get_hf_cache_dir(
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Resolve the Hub cache using Hugging Face environment precedence."""
+    env = os.environ if environ is None else environ
+    explicit = env.get("HF_HUB_CACHE") or env.get("HUGGINGFACE_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    hf_home = env.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home).expanduser() / "hub"
+    resolved_home = Path.home() if home is None else home
+    return resolved_home / ".cache" / "huggingface" / "hub"
+
+
+def _repo_cache_dir(model_id: str, cache_dir: Path) -> Path:
+    return cache_dir / f"models--{model_id.replace('/', '--')}"
+
+
+def _directory_size(path: Path) -> int:
+    total = 0
+    try:
+        for item in path.rglob("*"):
+            try:
+                if item.is_file() and not item.is_symlink():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
+def _snapshot_is_usable(snapshot: Path) -> bool:
+    """A snapshot must contain at least one readable, non-broken file."""
+    found_file = False
+    try:
+        for item in snapshot.rglob("*"):
+            if item.is_symlink() and not item.exists():
+                return False
+            if item.is_file():
+                found_file = True
+    except OSError:
+        return False
+    return found_file
+
+
+def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCacheStatus:
+    """Classify a model cache as ``ready``, ``partial`` or ``missing``."""
+    root = cache_dir or get_hf_cache_dir()
+    repo_dir = _repo_cache_dir(model_id, root)
+    if not repo_dir.is_dir():
+        return ModelCacheStatus(model_id, "missing", False, "尚未下載")
+
+    snapshots_dir = repo_dir / "snapshots"
+    try:
+        snapshots = [path for path in snapshots_dir.iterdir() if path.is_dir()]
+    except OSError:
+        snapshots = []
+
+    usable = {path.name: path for path in snapshots if _snapshot_is_usable(path)}
+    incomplete = []
+    try:
+        incomplete = list(repo_dir.rglob("*.incomplete"))
+    except OSError:
+        pass
+
+    revision = None
+    ref_revision = None
+    refs_dir = repo_dir / "refs"
+    main_ref = refs_dir / "main"
+    if main_ref.is_file():
+        try:
+            revision = main_ref.read_text(encoding="utf-8").strip() or None
+            ref_revision = revision
+        except OSError:
+            revision = None
+
+    selected = usable.get(revision) if revision else None
+    if selected is None and usable:
+        selected = max(usable.values(), key=lambda path: path.stat().st_mtime)
+        revision = selected.name
+
+    size_bytes = _directory_size(repo_dir)
+    if selected is None:
+        detail = "快取不完整：找不到可用 snapshot" if snapshots else "下載尚未完成"
+        return ModelCacheStatus(model_id, "partial", False, detail, size_bytes=size_bytes)
+
+    if incomplete:
+        return ModelCacheStatus(
+            model_id,
+            "partial",
+            False,
+            f"偵測到 {len(incomplete)} 個未完成下載檔",
+            revision,
+            str(selected),
+            size_bytes,
+        )
+
+    if ref_revision and ref_revision not in usable:
+        return ModelCacheStatus(
+            model_id,
+            "partial",
+            False,
+            "main revision 未指向有效 snapshot",
+            ref_revision,
+            str(selected),
+            size_bytes,
+        )
+
+    return ModelCacheStatus(
+        model_id,
+        "ready",
+        True,
+        "已下載且 snapshot 可讀",
+        revision,
+        str(selected),
+        size_bytes,
+    )
+
+
+def get_paddlex_cache_dir(
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Resolve PaddleX's official model cache directory."""
+    env = os.environ if environ is None else environ
+    cache_home = env.get("PADDLE_PDX_CACHE_HOME")
+    if cache_home:
+        return Path(cache_home).expanduser() / "official_models"
+    resolved_home = Path.home() if home is None else home
+    return resolved_home / ".paddlex" / "official_models"
+
+
+def inspect_paddlex_model(
+    model_name: str,
+    cache_dir: Path | None = None,
+) -> ModelCacheStatus:
+    """Inspect an official PaddleX model without importing Paddle/PaddleX."""
+    root = cache_dir or get_paddlex_cache_dir()
+    model_dir = root / model_name
+    if not model_dir.is_dir():
+        return ModelCacheStatus(model_name, "missing", False, "尚未下載")
+
+    files = []
+    partial_files = []
+    try:
+        for item in model_dir.rglob("*"):
+            if not item.is_file():
+                continue
+            files.append(item)
+            lowered = item.name.lower()
+            if lowered.endswith((".tmp", ".incomplete")) or "___tmp" in lowered:
+                partial_files.append(item)
+    except OSError:
+        return ModelCacheStatus(model_name, "partial", False, "無法讀取 PaddleX 模型目錄")
+
+    size_bytes = _directory_size(model_dir)
+    names = {item.name.lower() for item in files}
+    has_config = bool({"inference.yml", "inference.yaml", "config.json"} & names)
+    has_weights = any(
+        name.endswith((".pdiparams", ".safetensors", ".onnx")) for name in names
+    )
+    if partial_files or not (has_config and has_weights):
+        reason = (
+            f"偵測到 {len(partial_files)} 個未完成下載檔"
+            if partial_files
+            else "缺少 PaddleX 推論設定或權重"
+        )
+        return ModelCacheStatus(
+            model_name,
+            "partial",
+            False,
+            reason,
+            snapshot_path=str(model_dir),
+            size_bytes=size_bytes,
+        )
+    return ModelCacheStatus(
+        model_name,
+        "ready",
+        True,
+        "已下載且 PaddleX 推論檔案可讀",
+        snapshot_path=str(model_dir),
+        size_bytes=size_bytes,
+    )

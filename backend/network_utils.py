@@ -1,30 +1,22 @@
 ﻿# -*- coding: utf-8 -*-
 """
-網路偵測與 HuggingFace 離線模式工具
+網路偵測與本機模型快取工具
 
 提供：
 - HuggingFace Hub 可達性檢測（含代理偵測）
 - 離線模式環境變數設定
-- 模型本地快取狀態查詢
+- Hugging Face / PaddleX 模型本地快取狀態查詢
 """
 import logging
 import os
 import socket
 import urllib.request
-from pathlib import Path
 from typing import Dict
 
-logger = logging.getLogger(__name__)
+from backend.model_cache import get_hf_cache_dir, inspect_model_cache, inspect_paddlex_model
+from backend.model_registry import MODEL_SPECS
 
-REQUIRED_MODELS = {
-    "asr_1.7b": "Qwen/Qwen3-ASR-1.7B",
-    "asr_0.6b": "Qwen/Qwen3-ASR-0.6B",
-    "forced_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
-    "diarization": "pyannote/speaker-diarization-community-1",
-    "clip": "openai/clip-vit-large-patch14",
-    "bge_reranker": "BAAI/bge-reranker-v2-m3",
-    "bge_embedding": "BAAI/bge-m3",
-}
+logger = logging.getLogger(__name__)
 
 _is_offline: bool | None = None
 
@@ -139,31 +131,16 @@ def unset_hf_offline_env():
     _patch_hf_hub_offline(False)
 
 
-def _get_hf_cache_dir() -> Path:
-    """取得 HuggingFace Hub 快取目錄。"""
-    hf_home = os.environ.get("HF_HOME", "")
-    if hf_home:
-        return Path(hf_home) / "hub"
-    cache_dir = os.environ.get("HUGGINGFACE_HUB_CACHE", "")
-    if cache_dir:
-        return Path(cache_dir)
-    return Path.home() / ".cache" / "huggingface" / "hub"
+def _get_hf_cache_dir():
+    """Backward-compatible alias for the shared cache resolver."""
+    return get_hf_cache_dir()
 
 
 def is_model_cached(model_id: str) -> bool:
     """
-    檢查指定 HuggingFace 模型是否已存在於本地快取。
-
-    快取目錄結構為 models--{org}--{name}/snapshots/... ，
-    只要 snapshots 資料夾下有內容即視為已快取。
+    檢查指定 Hugging Face 模型是否有可用且完整的本地 snapshot。
     """
-    cache_dir = _get_hf_cache_dir()
-    safe_id = model_id.replace("/", "--")
-    model_dir = cache_dir / f"models--{safe_id}"
-    snapshots_dir = model_dir / "snapshots"
-    if not snapshots_dir.exists():
-        return False
-    return any(snapshots_dir.iterdir())
+    return inspect_model_cache(model_id).cached
 
 
 def get_all_models_status() -> Dict[str, dict]:
@@ -172,16 +149,18 @@ def get_all_models_status() -> Dict[str, dict]:
 
     Returns:
         {
-          "asr_1.7b": {"model_id": "Qwen/Qwen3-ASR-1.7B", "cached": True},
+          "asr_1.7b": {"model_id": "Qwen/Qwen3-ASR-1.7B-hf", "cached": True},
           ...
         }
     """
     result = {}
-    for key, model_id in REQUIRED_MODELS.items():
-        result[key] = {
-            "model_id": model_id,
-            "cached": is_model_cached(model_id),
-        }
+    for spec in MODEL_SPECS:
+        status = (
+            inspect_paddlex_model(spec.model_id)
+            if spec.source == "paddlex"
+            else inspect_model_cache(spec.model_id)
+        )
+        result[spec.key] = status.to_dict()
     return result
 
 
@@ -189,5 +168,5 @@ def make_offline_error_message(model_id: str) -> str:
     """產生離線時模型未快取的友善錯誤訊息。"""
     return (
         f"模型 {model_id} 尚未下載至本機快取。"
-        f"請先在有網路的環境中啟動系統並執行一次相關功能以下載模型，之後即可離線使用。"
+        f"請先在有網路時透過 Manager 的「模型管理」下載並驗證模型，之後即可離線使用。"
     )

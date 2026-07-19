@@ -11,7 +11,7 @@ from typing import List
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 from backend.clip_engine import search_similar_pages
-from backend.ocr_engine import build_ocr_prompt, _call_glm_ocr
+from backend.ocr_engine import DEFAULT_MODEL, build_ocr_prompt, _call_glm_ocr
 
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
@@ -28,7 +28,8 @@ async def clip_ocr_top1(
     must_exclude: str = Form(""),
     threshold: float = Form(0.5),
     fields: str = Form(...),
-    model: str = Form("glm-ocr"),
+    provider: str = Form(os.getenv("OCR_PROVIDER", "local")),
+    model: str = Form(os.getenv("OCR_MODEL", DEFAULT_MODEL)),
     max_retries: int = Form(3),
 ):
     # PDF check
@@ -63,8 +64,6 @@ async def clip_ocr_top1(
         raise HTTPException(status_code=400, detail=f"fields 格式錯誤: {e}")
 
     threshold = max(0.0, min(1.0, threshold))
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-
     prompt = build_ocr_prompt(fields_dict)
     raw_mode = len(fields_dict) == 0
 
@@ -111,7 +110,10 @@ async def clip_ocr_top1(
         ocr_result = _call_glm_ocr(
             image_base64=b64_image,
             prompt=prompt,
-            raw_mode=raw_mode
+            raw_mode=raw_mode,
+            provider=provider,
+            model=model,
+            max_retries=max_retries,
         )
 
         final_payload = {

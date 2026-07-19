@@ -3,11 +3,13 @@
 FastAPI 應用入口
 """
 import logging
+import time
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from backend.database import init_db
+from backend.database import fail_interrupted_tasks, init_db
 from backend.auth_utils import get_current_user
 from backend.routers.tasks import router as tasks_router
 from backend.routers.youtube import router as youtube_router
@@ -28,6 +30,9 @@ app = FastAPI(
     description="多模態語音/視覺/語意操作 API — 基於 Qwen / BGE / Clip",
     version="2.1.0",
 )
+app.state.ready = False
+app.state.started_at = time.time()
+app.state.semantic_status = "not_started"
 
 # ── CORS 設定 ──
 app.add_middleware(
@@ -56,7 +61,11 @@ app.include_router(system_router)
 @app.on_event("startup")
 async def startup():
     """啟動時初始化資料庫、偵測網路狀態並啟動語意模型背景程序"""
+    app.state.ready = False
     init_db()
+    interrupted_count = fail_interrupted_tasks()
+    if interrupted_count:
+        logger.warning("已將 %d 個因服務重啟中斷的任務標記為失敗", interrupted_count)
 
     # 先設離線模式，避免載入模型時因代理逾時卡住
     set_hf_offline_env()
@@ -70,14 +79,46 @@ async def startup():
     import asyncio
     
     async def load_bge():
-        await asyncio.to_thread(init_semantic_models)
-        start_worker()
+        app.state.semantic_status = "loading"
+        try:
+            initialized = await asyncio.to_thread(init_semantic_models)
+            if initialized:
+                start_worker()
+                app.state.semantic_status = "ready"
+            else:
+                app.state.semantic_status = "unavailable"
+        except Exception:
+            app.state.semantic_status = "error"
+            logger.exception("語意模型背景初始化失敗")
         
     asyncio.create_task(load_bge())
+    app.state.ready = True
 
 @app.on_event("shutdown")
 def shutdown():
+    app.state.ready = False
     stop_worker_and_cleanup()
+
+
+@app.get("/health/live", tags=["health"])
+def health_live():
+    """Process-level liveness. A response proves the event loop is serving requests."""
+    return {
+        "status": "alive",
+        "uptime_seconds": round(max(0.0, time.time() - app.state.started_at), 3),
+    }
+
+
+@app.get("/health/ready", tags=["health"])
+def health_ready():
+    """Core readiness; optional semantic model loading is reported separately."""
+    payload = {
+        "status": "ready" if app.state.ready else "starting",
+        "semantic": app.state.semantic_status,
+    }
+    if not app.state.ready:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.get("/")

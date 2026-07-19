@@ -19,7 +19,6 @@ from manager.gpu_detector import detect_gpu_info, get_pytorch_install_args
 from manager.config import (
     PROJECT_ROOT,
     get_venv_python,
-    get_venv_pip,
     get_requirements_path,
     get_frontend_dir,
     is_venv_exists,
@@ -29,6 +28,56 @@ from manager.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_python(command: list[str]) -> tuple[int, int] | None:
+    """Return a usable interpreter version without importing project deps."""
+    try:
+        result = subprocess.run(
+            [*command, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
+        )
+        if result.returncode == 0:
+            major, minor = result.stdout.strip().split()[:2]
+            return int(major), int(minor)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _find_project_python() -> tuple[list[str], tuple[int, int]] | None:
+    """Prefer the Qwen-recommended Python 3.12, then 3.10-3.13."""
+    candidates: list[list[str]] = []
+    if not getattr(sys, "frozen", False):
+        candidates.append([sys.executable])
+    py_launcher = shutil.which("py")
+    if py_launcher:
+        candidates.append([py_launcher, "-3.12"])
+    for name in ("python", "python3"):
+        executable = shutil.which(name)
+        if executable:
+            candidates.append([executable])
+
+    supported = []
+    seen = set()
+    for command in candidates:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        version = _probe_python(command)
+        if version == (3, 12):
+            return command, version
+        if version and version[0] == 3 and 10 <= version[1] <= 13:
+            supported.append((command, version))
+    return supported[0] if supported else None
 
 
 def _run_command(
@@ -109,21 +158,30 @@ def create_venv(on_output: Callable[[str], None] | None = None) -> bool:
             on_output("ℹ️ .venv 已存在，跳過建立")
         return True
 
+    interpreter = _find_project_python()
+    if interpreter is None:
+        if on_output:
+            on_output("❌ 找不到可用的 Python 3.10–3.13")
+            on_output("   Qwen 官方建議安裝 Python 3.12 後再建立 .venv")
+        return False
+    python_cmd, python_version = interpreter
+
+    venv_dir = PROJECT_ROOT / ".venv"
+    if venv_dir.exists():
+        if on_output:
+            on_output("⚠️ 現有 .venv 已損壞或其基礎 Python 已移除，正在重建")
+        if not _robust_rmtree(venv_dir, on_output):
+            if on_output:
+                on_output("❌ 無法移除損壞的 .venv，請先關閉使用中的 Backend")
+            return False
+
     if on_output:
         on_output("🔧 正在建立虛擬環境 .venv ...")
 
-    # 使用當前系統 Python 建立 venv (如果是 EXE，則尋找系統 python)
-    if getattr(sys, 'frozen', False):
-        import shutil
-        python_exe = shutil.which("python") or shutil.which("python3") or shutil.which("py")
-        if not python_exe:
-            if on_output:
-                on_output("❌ 找不到系統 Python，請確認已安裝 Python 並加入 PATH")
-            return False
-    else:
-        python_exe = sys.executable
+    if on_output:
+        on_output(f"   使用 Python {python_version[0]}.{python_version[1]}")
     success, _ = _run_command(
-        [python_exe, "-m", "venv", str(PROJECT_ROOT / ".venv")],
+        [*python_cmd, "-m", "venv", str(venv_dir)],
         on_output=on_output,
     )
 
@@ -231,9 +289,8 @@ def install_python_deps(
     if on_output:
         on_output(f"📦 正在安裝 Python 依賴（{compute_platform}）...")
 
-    pip_exe = str(get_venv_pip())
     success, _ = _run_command(
-        [pip_exe, "install", "-r", str(temp_req)],
+        [str(get_venv_python()), "-m", "pip", "install", "-r", str(temp_req)],
         on_output=on_output,
     )
 

@@ -16,6 +16,50 @@ import importlib
 import shutil
 from pathlib import Path
 
+PROJECT_ROOT_ENV = "OMNI_AI_PROJECT_ROOT"
+CLONE_URL = "https://github.com/zx90316/Omni-AI-GUI.git"
+
+
+def is_project_directory(path: Path) -> bool:
+    """Require the core source tree, not just one coincidentally named file."""
+    return all(
+        candidate.exists()
+        for candidate in (
+            path / "manager" / "app.py",
+            path / "backend" / "app.py",
+            path / "frontend" / "package.json",
+        )
+    )
+
+
+def get_project_override(
+    argv: list[str] | None = None,
+    environ: dict[str, str] | None = None,
+) -> Path | None:
+    """Read an explicit project root without letting argparse consume GUI args."""
+    args = sys.argv[1:] if argv is None else argv
+    env = os.environ if environ is None else environ
+    for index, arg in enumerate(args):
+        if arg == "--project-dir" and index + 1 < len(args):
+            return Path(args[index + 1]).expanduser().resolve()
+        if arg.startswith("--project-dir="):
+            return Path(arg.split("=", 1)[1]).expanduser().resolve()
+    value = env.get(PROJECT_ROOT_ENV, "").strip()
+    return Path(value).expanduser().resolve() if value else None
+
+
+def configure_project_override() -> Path | None:
+    """Validate and publish the external source tree used by a packaged Manager."""
+    project_dir = get_project_override()
+    if project_dir is None:
+        return None
+    if not is_project_directory(project_dir):
+        raise RuntimeError(f"指定的 Omni AI 專案目錄無效: {project_dir}")
+    os.environ[PROJECT_ROOT_ENV] = str(project_dir)
+    os.chdir(project_dir)
+    return project_dir
+
+
 def auto_clone_setup():
     """
     如果在專案目錄之外執行打包後的 .exe，則自動詢問並 git clone 專案。
@@ -24,18 +68,23 @@ def auto_clone_setup():
     if not getattr(sys, 'frozen', False):
         return
 
+    override = get_project_override()
+    if override is not None and is_project_directory(override):
+        return
+
     exe_path = Path(sys.executable).resolve()
     current_dir = exe_path.parent
 
     # 確認當前目錄是否為專案目錄（藉由辨識是否有 launch.py 或 manager 目錄）
     # 因為打包後我們希望 exe 被放在專案根目錄下
-    if (current_dir / "launch.py").exists() or (current_dir / "manager").is_dir():
+    if is_project_directory(current_dir):
         return
 
     # 若不在專案目錄中，表示使用者可能只下載了 exe
     import tkinter as tk
-    from tkinter import messagebox
+    from tkinter import filedialog, messagebox
     import threading
+    import queue
 
     root = tk.Tk()
     root.withdraw()
@@ -51,12 +100,43 @@ def auto_clone_setup():
     result = messagebox.askyesno(
         "Omni AI 自動設定",
         "偵測到目前不在 Omni AI 專案資料夾中。\n\n"
-        "是否要自動下載 (git clone) 整個專案，\n並將此管理面板移入專案資料夾中執行？",
+        "是否要將完整專案下載到新的資料夾後啟動？\n"
+        "現有 EXE 所在目錄不會被修改。",
         icon="info"
     )
 
     if not result:
         sys.exit(0)
+
+    install_parent = filedialog.askdirectory(
+        title="選擇 Omni AI 安裝位置",
+        initialdir=str(current_dir),
+        mustexist=True,
+    )
+    if not install_parent:
+        sys.exit(0)
+    target_dir = Path(install_parent).resolve() / "Omni-AI-GUI"
+    if target_dir.exists() and is_project_directory(target_dir):
+        use_existing = messagebox.askyesno(
+            "使用既有專案",
+            f"已找到 Omni AI 專案：\n{target_dir}\n\n是否直接使用？",
+        )
+        if not use_existing:
+            sys.exit(0)
+        child_env = os.environ.copy()
+        child_env[PROJECT_ROOT_ENV] = str(target_dir)
+        subprocess.Popen(
+            [str(exe_path), "--project-dir", str(target_dir)],
+            cwd=str(target_dir),
+            env=child_env,
+        )
+        os._exit(0)
+    if target_dir.exists() and any(target_dir.iterdir()):
+        messagebox.showerror(
+            "安裝位置已有檔案",
+            f"為避免覆蓋資料，請移開或重新命名此目錄後再試：\n{target_dir}",
+        )
+        sys.exit(1)
 
     # 開始 Clone
     progress_win = tk.Toplevel(root)
@@ -80,41 +160,55 @@ def auto_clone_setup():
     status_label = tk.Label(progress_win, text="請稍候，這可能需要一點時間...")
     status_label.pack()
 
+    results: queue.Queue[tuple[bool, str]] = queue.Queue(maxsize=1)
+
     def do_clone():
-        clone_url = "https://github.com/zx90316/Omni-AI-GUI.git"
-        
+        creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        completed = subprocess.run(
+            ["git", "clone", "--depth", "1", CLONE_URL, str(target_dir)],
+            cwd=str(Path(install_parent).resolve()),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+        )
+        message = (completed.stdout + "\n" + completed.stderr).strip()
+        results.put((completed.returncode == 0, message))
+
+    def poll_clone_result():
         try:
-            # 使用 init + fetch + reset 將專案拉取到當前資料夾（保留現有的 exe 與 _internal）
-            creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-            
-            subprocess.check_call(["git", "init"], cwd=str(current_dir), creationflags=creationflags)
-            
-            # 確保還沒有 origin，有的話也沒關係（略過建立）
-            try:
-                subprocess.check_call(["git", "remote", "add", "origin", clone_url], cwd=str(current_dir), creationflags=creationflags)
-            except subprocess.CalledProcessError:
-                pass
-                
-            subprocess.check_call(["git", "fetch", "--all"], cwd=str(current_dir), creationflags=creationflags)
-            subprocess.check_call(["git", "reset", "--hard", "origin/master"], cwd=str(current_dir), creationflags=creationflags)
-            subprocess.check_call(["git", "branch", "--set-upstream-to=origin/master", "master"], cwd=str(current_dir), creationflags=creationflags)
+            success, detail = results.get_nowait()
+        except queue.Empty:
+            root.after(100, poll_clone_result)
+            return
 
-            # 提示成功並在當前目錄重啟
-            messagebox.showinfo(
-                "下載完成",
-                "專案已成功下載至當前資料夾！\n\n按下確定後將會自動啟動管理面板。"
+        progress_win.destroy()
+        if not success or not is_project_directory(target_dir):
+            messagebox.showerror(
+                "下載失敗",
+                f"無法建立完整的 Omni AI 專案：\n{detail or '專案結構驗證失敗'}",
             )
+            root.destroy()
+            return
 
-            # 重啟
-            subprocess.Popen([str(exe_path)], cwd=str(current_dir))
-            os._exit(0)
+        messagebox.showinfo(
+            "下載完成",
+            f"專案已安全下載至：\n{target_dir}\n\n按下確定後啟動管理面板。",
+        )
+        child_env = os.environ.copy()
+        child_env[PROJECT_ROOT_ENV] = str(target_dir)
+        subprocess.Popen(
+            [str(exe_path), "--project-dir", str(target_dir)],
+            cwd=str(target_dir),
+            env=child_env,
+        )
+        root.destroy()
 
-        except Exception as e:
-            messagebox.showerror("錯誤", f"下載與設定過程中發生錯誤:\n{e}")
-            os._exit(1)
-
-    threading.Thread(target=do_clone, daemon=True).start()
+    threading.Thread(target=do_clone, daemon=True, name="project-clone").start()
+    root.after(100, poll_clone_result)
     root.mainloop()
+    raise SystemExit(0)
 
 
 
@@ -123,6 +217,7 @@ def ensure_dependencies():
     deps = {
         "ttkbootstrap": "ttkbootstrap>=1.10.0",
         "dotenv": "python-dotenv",
+        "psutil": "psutil>=5.9",
     }
 
     missing = []
@@ -149,6 +244,12 @@ def ensure_dependencies():
 
 
 def main():
+    try:
+        configure_project_override()
+    except RuntimeError as exc:
+        print(f"❌ {exc}")
+        raise SystemExit(2) from exc
+
     # 自動 Clone 檢查與處理
     auto_clone_setup()
 

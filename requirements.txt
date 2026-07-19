@@ -1,13 +1,17 @@
-# PyTorch（CUDA 12.6）
+# PyTorch（Manager 會依偵測結果替換 CUDA/CPU index）
 # CPU 版本請改用: --extra-index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.8.0
-torchaudio==2.8.0
+torch==2.10.0
+torchvision==0.25.0
+torchaudio==2.10.0
 
-# ASR 核心
-qwen-asr
-transformers>=4.41.0
-accelerate>=0.31.0
+# Qwen3-ASR HF-native 與 GLM-OCR 共用 Transformers 5.x。
+# Qwen3-ASR 於 2026-06-26 合入 Transformers；鎖官方 commit 避免浮動 main。
+transformers @ git+https://github.com/huggingface/transformers.git
+huggingface_hub
+accelerate>=1.12.0
+nagisa==0.2.11
+soynlp==0.0.493
 
 # 語者分離
 pyannote.audio
@@ -15,6 +19,7 @@ pyannote.audio
 # 音訊處理
 numpy
 soundfile
+librosa
 av
 
 # 繁簡轉換
@@ -38,8 +43,10 @@ google-genai
 PyJWT
 pydantic[email]
 
-# OCR (PDF 處理)
+# OCR（官方 SDK + HF-native Transformers 推論 + PDF）
+-r requirements-ocr.txt
 PyMuPDF
+requests>=2.32.0
 
 # 以圖搜頁 (CLIP)
 Pillow
@@ -48,9 +55,3 @@ Pillow
 FlagEmbedding 
 
 ttkbootstrap
-
-# OCR 後處理
-opencc
-
-# glm-ocr (輕量化安裝)
--e backend/glm-ocr

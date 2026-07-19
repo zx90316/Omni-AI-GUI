@@ -55,6 +55,13 @@ from manager.git_manager import git_pull, check_for_updates, get_current_version
 from manager.network_utils import check_internet
 from manager.ffmpeg_utils import is_ffmpeg_installed, download_ffmpeg
 from manager.env_editor import open_env_editor
+from manager.model_manager import (
+    MODEL_SPECS,
+    cancel_model_download,
+    download_models,
+    get_models_status,
+)
+from backend.model_cache import get_hf_cache_dir, get_paddlex_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +89,7 @@ class ManagerApp:
     def __init__(self):
         self.config = load_config()
         self.process_manager: ProcessManager | None = None
+        self._model_download_pending = False
 
         # 建立主視窗
         self.root = ttk.Window(
@@ -406,6 +414,90 @@ class ManagerApp:
         )
         self.btn_download_ffmpeg.pack(side=LEFT)
 
+        # Hugging Face / PaddleX 模型
+        model_frame = ttk.LabelFrame(inner, text="  🤖 模型管理  ")
+        model_frame.pack(fill=BOTH, expand=True, pady=(0, 10), ipadx=10, ipady=8)
+
+        self.model_summary_label = ttk.Label(
+            model_frame,
+            text="模型快取: 檢測中...",
+            font=("", 10),
+        )
+        self.model_summary_label.pack(anchor=W, pady=(0, 6))
+
+        progress_frame = ttk.Frame(model_frame)
+        progress_frame.pack(fill=X, pady=(0, 6))
+        self.model_download_label = ttk.Label(progress_frame, text="沒有模型下載作業", width=36)
+        self.model_download_label.pack(side=LEFT, padx=(0, 8))
+        self.model_download_progress = ttk.Progressbar(
+            progress_frame,
+            mode="determinate",
+            maximum=100,
+            value=0,
+        )
+        self.model_download_progress.pack(side=LEFT, fill=X, expand=True)
+
+        columns = ("feature", "label", "model_id", "status", "size")
+        model_tree_frame = ttk.Frame(model_frame)
+        model_tree_frame.pack(fill=BOTH, expand=True, pady=(0, 6))
+        self.model_tree = ttk.Treeview(
+            model_tree_frame,
+            columns=columns,
+            show="headings",
+            selectmode="extended",
+            height=7,
+        )
+        headings = {
+            "feature": ("功能", 90),
+            "label": ("模型", 175),
+            "model_id": ("模型來源 / ID", 310),
+            "status": ("本機狀態", 105),
+            "size": ("快取大小", 85),
+        }
+        for column, (title, width) in headings.items():
+            self.model_tree.heading(column, text=title)
+            self.model_tree.column(column, width=width, minwidth=60, stretch=column == "model_id")
+        model_scrollbar = ttk.Scrollbar(
+            model_tree_frame,
+            orient=VERTICAL,
+            command=self.model_tree.yview,
+        )
+        self.model_tree.configure(yscrollcommand=model_scrollbar.set)
+        self.model_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        model_scrollbar.pack(side=RIGHT, fill=Y)
+
+        model_btns = ttk.Frame(model_frame)
+        model_btns.pack(fill=X)
+        self.btn_refresh_models = ttk.Button(
+            model_btns,
+            text="🔍 重新檢查",
+            bootstyle="info-outline",
+            command=self._refresh_model_status,
+        )
+        self.btn_refresh_models.pack(side=LEFT, padx=(0, 5))
+        self.btn_download_selected_models = ttk.Button(
+            model_btns,
+            text="📥 下載所選",
+            bootstyle="info",
+            command=self._download_selected_models,
+        )
+        self.btn_download_selected_models.pack(side=LEFT, padx=(0, 5))
+        self.btn_download_missing_models = ttk.Button(
+            model_btns,
+            text="📦 下載全部缺少模型",
+            bootstyle="primary",
+            command=lambda: self._start_model_download(None, True),
+        )
+        self.btn_download_missing_models.pack(side=LEFT)
+        self.btn_cancel_model_download = ttk.Button(
+            model_btns,
+            text="⏹ 取消下載",
+            bootstyle="danger-outline",
+            command=self._cancel_model_download,
+            state="disabled",
+        )
+        self.btn_cancel_model_download.pack(side=RIGHT)
+
         # 重新安裝
         ttk.Separator(inner, orient=HORIZONTAL).pack(fill=X, pady=10)
 
@@ -470,6 +562,12 @@ class ManagerApp:
         net_frame = ttk.LabelFrame(inner, text="  🌐 網路設定  ")
         net_frame.pack(fill=X, pady=(0, 10), ipadx=10, ipady=8)
 
+        be_host_frame = ttk.Frame(net_frame)
+        be_host_frame.pack(fill=X, pady=(0, 5))
+        ttk.Label(be_host_frame, text="Backend Host:", width=15).pack(side=LEFT)
+        self.backend_host_var = ttk.StringVar(value=str(self.config.get("backend_host", "0.0.0.0")))
+        ttk.Entry(be_host_frame, textvariable=self.backend_host_var, width=15).pack(side=LEFT)
+
         fe_host_frame = ttk.Frame(net_frame)
         fe_host_frame.pack(fill=X, pady=(0, 5))
 
@@ -508,6 +606,24 @@ class ManagerApp:
         ttk.Label(max_frame, text="最大重啟次數:", width=20).pack(side=LEFT)
         self.max_restart_var = ttk.StringVar(value=str(self.config.get("max_restart_attempts", 5)))
         ttk.Spinbox(max_frame, from_=1, to=20, textvariable=self.max_restart_var, width=5).pack(side=LEFT)
+
+        startup_frame = ttk.Frame(adv_frame)
+        startup_frame.pack(fill=X, pady=(0, 5))
+        ttk.Label(startup_frame, text="啟動就緒逾時 (秒):", width=20).pack(side=LEFT)
+        self.startup_timeout_var = ttk.StringVar(value=str(self.config.get("startup_timeout", 60)))
+        ttk.Spinbox(startup_frame, from_=5, to=600, textvariable=self.startup_timeout_var, width=5).pack(side=LEFT)
+
+        threshold_frame = ttk.Frame(adv_frame)
+        threshold_frame.pack(fill=X, pady=(0, 5))
+        ttk.Label(threshold_frame, text="健康失敗重啟門檻:", width=20).pack(side=LEFT)
+        self.health_failure_var = ttk.StringVar(value=str(self.config.get("health_failure_threshold", 3)))
+        ttk.Spinbox(threshold_frame, from_=1, to=20, textvariable=self.health_failure_var, width=5).pack(side=LEFT)
+
+        probe_frame = ttk.Frame(adv_frame)
+        probe_frame.pack(fill=X, pady=(0, 5))
+        ttk.Label(probe_frame, text="單次健康檢查逾時:", width=20).pack(side=LEFT)
+        self.health_probe_timeout_var = ttk.StringVar(value=str(self.config.get("health_probe_timeout", 2)))
+        ttk.Spinbox(probe_frame, from_=1, to=30, textvariable=self.health_probe_timeout_var, width=5).pack(side=LEFT)
 
         # 儲存按鈕
         ttk.Button(
@@ -639,6 +755,16 @@ class ManagerApp:
 
     def _git_pull(self):
         self._append_console("system", "━" * 50)
+        if self.process_manager and any(
+            self.process_manager.get_status(name)
+            in {ProcessStatus.STARTING, ProcessStatus.RUNNING, ProcessStatus.STOPPING}
+            for name in ("backend", "frontend")
+        ):
+            self._append_console(
+                "system",
+                "⚠️ 前後端仍在運行，已取消更新；請先停止服務以避免載入新舊混合程式",
+            )
+            return
         git_pull(on_output=lambda line: self._append_console("system", line))
         self._update_version_info()
 
@@ -671,6 +797,153 @@ class ManagerApp:
             download_ffmpeg(on_output=lambda line: self._append_console("system", line))
         finally:
             self.root.after_idle(self._update_install_status)
+
+    @staticmethod
+    def _format_bytes(size_bytes: int) -> str:
+        size = float(size_bytes)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024 or unit == "TB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size_bytes} B"
+
+    def _set_model_buttons_state(self, state: str):
+        for button in (
+            self.btn_refresh_models,
+            self.btn_download_selected_models,
+            self.btn_download_missing_models,
+        ):
+            button.configure(state=state)
+
+    def _set_model_download_active(self, active: bool):
+        self._set_model_buttons_state("disabled" if active else "normal")
+        self.btn_cancel_model_download.configure(state="normal" if active else "disabled")
+        if not active:
+            self.model_download_progress.stop()
+
+    def _cancel_model_download(self):
+        if cancel_model_download():
+            self.model_download_label.configure(text="正在取消模型下載...")
+            self.btn_cancel_model_download.configure(state="disabled")
+
+    def _on_model_download_event(self, event: dict):
+        self.root.after_idle(self._render_model_download_event, event)
+
+    def _render_model_download_event(self, event: dict):
+        event_type = event.get("type")
+        label = event.get("label") or event.get("model_id") or "模型"
+        if event_type == "start":
+            self.model_download_label.configure(text=f"正在下載 {label}")
+            if event.get("total_bytes"):
+                self.model_download_progress.stop()
+                self.model_download_progress.configure(mode="determinate", value=0)
+            else:
+                self.model_download_progress.configure(mode="indeterminate")
+                self.model_download_progress.start(12)
+        elif event_type == "progress":
+            percent = event.get("percent")
+            if percent is not None:
+                self.model_download_progress.stop()
+                self.model_download_progress.configure(mode="determinate", value=float(percent))
+                completed = self._format_bytes(int(event.get("completed_bytes") or 0))
+                total = self._format_bytes(int(event.get("total_bytes") or 0))
+                self.model_download_label.configure(
+                    text=f"{label}: {float(percent):.1f}% ({completed}/{total})"
+                )
+        elif event_type == "phase":
+            self.model_download_label.configure(text=f"{label}: {event.get('message', '處理中')}")
+        elif event_type == "complete":
+            self.model_download_progress.stop()
+            self.model_download_progress.configure(mode="determinate", value=100)
+            self.model_download_label.configure(text=f"{label}: 下載完成")
+        elif event_type == "error":
+            self.model_download_progress.stop()
+            self.model_download_progress.configure(mode="determinate", value=0)
+            self.model_download_label.configure(text=f"{label}: 下載失敗")
+        elif event_type == "cancelled":
+            self.model_download_progress.stop()
+            self.model_download_progress.configure(mode="determinate", value=0)
+            self.model_download_label.configure(text=f"{label}: 已取消，可於下次繼續")
+
+    def _refresh_model_status(self):
+        self._set_model_buttons_state("disabled")
+        self._run_async(self._do_refresh_model_status)
+
+    def _do_refresh_model_status(self):
+        try:
+            statuses = get_models_status()
+            self.root.after_idle(self._render_model_status, statuses)
+        finally:
+            self.root.after_idle(self._set_model_buttons_state, "normal")
+
+    def _render_model_status(self, statuses):
+        selected = set(self.model_tree.selection())
+        self.model_tree.delete(*self.model_tree.get_children())
+        ready_count = 0
+        for spec in MODEL_SPECS:
+            status = statuses[spec.key]
+            if status.cached:
+                ready_count += 1
+                status_text = "✅ 已存在"
+            elif status.state == "partial":
+                status_text = "⚠️ 不完整"
+            else:
+                status_text = "❌ 缺少"
+            self.model_tree.insert(
+                "",
+                "end",
+                iid=spec.key,
+                values=(
+                    spec.feature,
+                    spec.label,
+                    f"{'PaddleX' if spec.source == 'paddlex' else 'HF'}: {spec.model_id}",
+                    status_text,
+                    self._format_bytes(status.size_bytes),
+                ),
+            )
+            if spec.key in selected:
+                self.model_tree.selection_add(spec.key)
+        self.model_summary_label.configure(
+            text=(
+                f"模型快取: {ready_count}/{len(MODEL_SPECS)} 可用  ·  "
+                f"HF: {get_hf_cache_dir()}  ·  PaddleX: {get_paddlex_cache_dir()}"
+            ),
+            bootstyle="success" if ready_count == len(MODEL_SPECS) else "warning",
+        )
+
+    def _download_selected_models(self):
+        selected = list(self.model_tree.selection())
+        if not selected:
+            self._append_console("system", "ℹ️ 請先在模型清單中選擇至少一個模型")
+            return
+        self._start_model_download(selected, False)
+
+    def _start_model_download(self, model_keys=None, missing_only=False):
+        """Reserve the GUI download slot before creating the worker thread."""
+        if self._model_download_pending:
+            self._append_console("system", "⚠️ 已有模型下載作業正在進行")
+            return
+        self._model_download_pending = True
+        self._set_model_download_active(True)
+        self._run_async(self._download_model_keys, model_keys, missing_only)
+
+    def _finish_model_download(self):
+        self._model_download_pending = False
+        self._set_model_download_active(False)
+
+    def _download_model_keys(self, model_keys=None, missing_only=False):
+        self._append_console("system", "━" * 50)
+        try:
+            keys = list(model_keys) if model_keys is not None else [spec.key for spec in MODEL_SPECS]
+            download_models(
+                keys,
+                on_output=lambda line: self._append_console("system", line),
+                on_event=self._on_model_download_event,
+                missing_only=missing_only,
+            )
+        finally:
+            self._do_refresh_model_status()
+            self.root.after_idle(self._finish_model_download)
 
     def _confirm_reinstall(self):
         """確認重新安裝"""
@@ -729,6 +1002,8 @@ class ManagerApp:
         py_ver = get_python_version()
         node_ver = get_node_version()
         npm_ver = get_npm_version()
+        model_statuses = get_models_status()
+        ready_models = sum(status.cached for status in model_statuses.values())
 
         # Git 版本
         version_info = get_current_version() if is_git_repo() else None
@@ -782,11 +1057,15 @@ class ManagerApp:
             f"  .venv:          {'✅ 已建立' if is_venv_exists() else '❌ 未建立'}",
             f"  node_modules:   {'✅ 已安裝' if is_node_modules_exists() else '❌ 未安裝'}",
             f"  FFmpeg:         {'✅ 已安裝' if is_ffmpeg_installed() else '❌ 未安裝'}",
+            f"  模型快取:       {ready_models}/{len(MODEL_SPECS)} 可用",
+            f"  快取位置:       {get_hf_cache_dir()}",
+            f"  PaddleX 快取:   {get_paddlex_cache_dir()}",
             "",
             "═" * 50,
         ])
 
         self.root.after_idle(self._update_info_text, "\n".join(info_lines))
+        self.root.after_idle(self._render_model_status, model_statuses)
         self._append_console("system", "✅ 系統資訊載入完成")
 
     def _update_info_text(self, text: str):
@@ -845,6 +1124,7 @@ class ManagerApp:
         self.config["auto_start_on_launch"] = self.auto_start_var.get()
         self.config["start_backend"] = self.start_backend_var.get()
         self.config["start_frontend"] = self.start_frontend_var.get()
+        self.config["backend_host"] = self.backend_host_var.get().strip()
         self.config["frontend_host"] = self.frontend_host_var.get().strip()
 
         try:
@@ -863,9 +1143,25 @@ class ManagerApp:
             self.config["max_restart_attempts"] = int(self.max_restart_var.get())
         except ValueError:
             pass
+        try:
+            self.config["startup_timeout"] = int(self.startup_timeout_var.get())
+        except ValueError:
+            pass
+        try:
+            self.config["health_failure_threshold"] = int(self.health_failure_var.get())
+        except ValueError:
+            pass
+        try:
+            self.config["health_probe_timeout"] = int(self.health_probe_timeout_var.get())
+        except ValueError:
+            pass
 
-        save_config(self.config)
-        self._append_console("system", "💾 設定已儲存")
+        if save_config(self.config):
+            if self.process_manager:
+                self.process_manager.reload_config()
+            self._append_console("system", "💾 設定已儲存；新的連線設定會在下次啟動/重啟時套用")
+        else:
+            self._append_console("system", "❌ 設定儲存失敗，請檢查檔案權限")
 
     # ─── 關閉 ─────────────────────────────────────────
 

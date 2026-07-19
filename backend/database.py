@@ -41,7 +41,7 @@ class Task(Base):
     task_type = Column(String(20), default="local") # "local", "youtube", or "subsync_upload"
     video_id = Column(String(50), nullable=True) # for youtube or subsync uploads
     filename = Column(String(255), nullable=False)
-    status = Column(String(20), default="pending")  # pending / processing / completed / failed
+    status = Column(String(20), default="pending")  # pending / processing / cancelling / completed / failed / cancelled
     model = Column(String(100), nullable=False)
     language = Column(String(50), nullable=False)
     enable_diarization = Column(Boolean, default=True)
@@ -96,3 +96,30 @@ def get_db():
 def init_db():
     """初始化資料庫（建立資料表）"""
     Base.metadata.create_all(bind=engine)
+
+
+def fail_interrupted_tasks() -> int:
+    """將上次程序遺留的待處理任務標記為失敗，避免前端永久等待。"""
+    db = SessionLocal()
+    try:
+        interrupted = db.query(Task).filter(
+            Task.status.in_(("pending", "processing", "cancelling"))
+        ).all()
+        if not interrupted:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        for task in interrupted:
+            if task.status == "cancelling":
+                task.status = "cancelled"
+                task.progress_message = "已取消（服務重啟）"
+                task.error_message = None
+            else:
+                task.status = "failed"
+                task.progress_message = "服務重啟，任務已中斷"
+                task.error_message = "ASR 處理程序在任務完成前重新啟動，請重新提交任務。"
+            task.completed_at = now
+        db.commit()
+        return len(interrupted)
+    finally:
+        db.close()

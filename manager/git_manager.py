@@ -87,6 +87,16 @@ def git_pull(on_output: Callable[[str], None] | None = None) -> bool:
     Returns:
         bool: 是否成功
     """
+    clean, detail = is_worktree_clean()
+    if clean is None:
+        if on_output:
+            on_output(f"❌ 無法檢查 Git 工作樹狀態：{detail}")
+        return False
+    if not clean:
+        if on_output:
+            on_output("⚠️ 工作樹有未提交變更，已取消更新；請先提交或妥善保存變更")
+        return False
+
     if not check_internet():
         msg = "⚠️ 無網路連線，跳過 git pull"
         if on_output:
@@ -107,6 +117,14 @@ def git_pull(on_output: Callable[[str], None] | None = None) -> bool:
             on_output("❌ Git pull 失敗")
 
     return success
+
+
+def is_worktree_clean() -> tuple[bool | None, str]:
+    """Return clean/dirty without modifying the repository."""
+    success, output = _run_git_command(["status", "--porcelain"])
+    if not success:
+        return None, output
+    return not bool(output.strip()), output
 
 
 def check_for_updates(on_output: Callable[[str], None] | None = None) -> bool | None:

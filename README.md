@@ -4,16 +4,16 @@
 
 ## ✨ 核心大模型功能
 
-- 🎙️ **語音辨識 (ASR)** — 內建 Qwen3 ASR 1.7B (高品質) / 0.6B (輕量) 模型，支援自動轉換臺灣慣用繁體中文。
+- 🎙️ **語音辨識 (ASR)** — 使用 Qwen 官方 Transformers-native `Qwen3-ASR-1.7B-hf` / `0.6B-hf`，支援語言偵測、官方 Forced Aligner 時間戳與臺灣慣用繁體中文。
 - 👥 **語者分離** — 整合 pyannote.audio，自動識別音訊中的多位說話者。
 - � **圖片搜尋 (ClipSearch)** — 基於視覺模型 (CLIP) 的語意圖片檢索系統。
-- � **OCR 智慧擷取** — 支援 PDF 與圖片之光學字元辨識，整合 Ollama `glm-ocr` 模型進行結構化欄位擷取。
+- 📄 **GLM-OCR 文件辨識** — 專案內直接推論（不需要 Ollama），支援完整文件版面解析、文字、表格、公式、JSON 欄位萃取與 Markdown/JSON 匯出；亦可切換 vLLM、SGLang 或 Ollama。
 - 🧠 **語意引擎 (Semantic)** — 支援文本 Embedding 與 Reranking，為檢索系統增強精確度。
 - ⚙️ **整合工作流 (Workflow)** — 將多個 AI 模組串聯（例：ClipSearch 檢索影像後，透過 OCR 自動提取關鍵欄位）。
 
 ## 🚀 系統與進階功能
 
-- 🖥️ **Manager 管理面板 (GUI)** — 現代化設定介面，提供一鍵安裝依賴、啟動/停止服務與一鍵版本更新。
+- 🖥️ **Manager 管理面板 (GUI)** — 現代化設定介面，提供一鍵安裝依賴、啟動/停止服務、一鍵版本更新與模型預下載。
 - 📦 **單一執行檔與自動部屬** — 提供打包好的 `.exe` 檔，支援首次執行自動 `git clone` 專案與環境建置。
 - 🌐 **Web 前端介面 (React + Vite)** — 優雅且響應式的網頁介面，提供視覺化任務列表與多模組操作。
 - 🎥 **YouTube 解析與下載** — 內建 YT 影片下載功能，可直接貼上網址並送入排程。
@@ -33,14 +33,21 @@ python launch.py
 ```
 > **提示**：系統將透過 `launch.py` 啟動前端 Manager 面板。你可於介面中一鍵建立 `.venv` 虛擬環境、執行 `pip install`、`npm install` 並自動下載設定 FFmpeg。
 
+Manager 的「安裝/更新 → 模型管理」會列出所有本機 AI 模型的快取狀態。可先選擇模型下載，或一次下載全部缺少／不完整的模型；下載完成後會進行本機 snapshot 驗證，無需等到實際使用 ASR、OCR、CLIP 或 Semantic 功能才開始下載。
+
+模型下載會顯示可用的位元組進度與驗證階段，亦可中途取消；部分 Hugging Face 快取會保留供下次續用。前後端只有通過 HTTP readiness 後才顯示為已啟動，執行日誌保存在 `.manager/logs/`。若關閉 Manager 時選擇保留服務，下次啟動會驗證 PID 與服務健康後重新接管。
+
+建議使用 Qwen 官方指引採用的 Python 3.12，並確保 Git 可從命令列使用。Manager 會優先尋找 Python 3.12；若舊 `.venv` 指向已移除的 Python，會提示並重建。Transformers 目前鎖定含 Qwen3-ASR 原生支援的 Hugging Face 官方 commit，避免追蹤浮動 `main`。
+
 ### 🔑 環境變數與模型設定
 
 - **Pyannote (語者分離)**：於 Manager 介面設定或新增 `.env` 檔案，填入 [HuggingFace Token](https://huggingface.co/settings/tokens)：
   ```env
   HF_TOKEN=hf_your_token_here
   ```
-- **Ollama/OCR**：確保本機已安裝 Ollama 並部署 `glm-ocr` 來啟用 OCR 欄位擷取功能。
-- **本地模型存放**：Embedding/Reranking 模型在初次使用時會自動下載至預設模型目錄（由 Semantic Engine 管理）。
+- **ASR**：預設使用 60 秒低能量邊界切段、官方 HF-native 轉錄與 `Qwen3-ForcedAligner-0.6B-hf`。可用 `ASR_MAX_NEW_TOKENS` 調整每段輸出上限；相容環境可另行安裝 FlashAttention 並設 `ASR_ATTN_IMPLEMENTATION=flash_attention_2`。
+- **OCR**：預設 `OCR_PROVIDER=local`，首次使用會從 Hugging Face 下載 `zai-org/GLM-OCR`；完整文件的版面模式另會下載 PP-DocLayoutV3。正式或多人使用環境可把 `OCR_PROVIDER` 設為 `openai` 並以 `OCR_API_URL` 連接 vLLM/SGLang。Ollama 僅保留為相容選項。
+- **本地模型存放**：大部分模型使用 Hugging Face Hub 快取（可用 `HF_HUB_CACHE` 或 `HF_HOME` 改變位置）；PP-DocLayoutV3 使用 GLM-OCR 實際讀取的 PaddleX 快取（可用 `PADDLE_PDX_CACHE_HOME` 改變位置）。Manager 會區分「已存在、缺少、不完整」三種狀態。
 
 ### 🌐 使用 Web 介面
 於 Manager 面板依序點擊「啟動 Backend」與「啟動 Frontend」，接著按「🌐 開啟前端頁面」即可在瀏覽器使用完整服務介面。
@@ -52,7 +59,7 @@ python launch.py
 | ASR (GPU) | Qwen3 1.7B | 12 GB VRAM |
 | ASR (GPU) | Qwen3 0.6B | 10 GB VRAM |
 | ASR (CPU) | Qwen3 0.6B | 10 GB RAM |
-| OCR | Ollama `glm-ocr` | 具備基礎系統資源即可 |
+| OCR（本機直接推論） | GLM-OCR 0.9B BF16 | 建議 NVIDIA GPU；CPU 可執行但較慢 |
 | Semantic | BGE 等語意模型 | 具備基礎系統資源即可 |
 
 *提示：ASR 語音辨識功能建議採用具備 CUDA 加速的 Nvidia GPU 以獲得最佳轉換速度。*

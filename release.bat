@@ -36,7 +36,7 @@ echo [1/5] 正在安裝管理面板依賴...
 
 echo.
 echo [2/5] 正在使用 PyInstaller 建置...
-.venv\Scripts\pyinstaller --noconfirm --onedir --windowed --name "Omni-AI-Manager" --add-data "manager;manager" --hidden-import ttkbootstrap --hidden-import dotenv launch.py
+.venv\Scripts\pyinstaller --noconfirm --onedir --windowed --name "Omni-AI-Manager" --add-data "manager;manager" --hidden-import ttkbootstrap --hidden-import dotenv --hidden-import psutil launch.py
 if errorlevel 1 (
     echo ❌ PyInstaller 建置失敗！
     pause

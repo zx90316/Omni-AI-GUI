@@ -8,7 +8,7 @@ import torchaudio
 import soundfile as sf
 import av
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Callable, Tuple, Optional
 
 from backend.config import AUDIO_SAMPLE_RATE
 
@@ -60,6 +60,7 @@ def convert_to_wav(
     output_path: str,
     start_time: Optional[float] = None,
     end_time: Optional[float] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> str:
     """
     轉換音訊為 WAV 格式 (16kHz 單聲道)
@@ -78,6 +79,8 @@ def convert_to_wav(
         return str(output_path)
 
     with av.open(input_path) as input_container:
+        if not input_container.streams.audio:
+            raise ValueError(f"檔案不包含可辨識的音軌: {input_path}")
         input_stream = input_container.streams.audio[0]
 
         resampler = av.audio.resampler.AudioResampler(
@@ -99,6 +102,8 @@ def convert_to_wav(
             current_time = start_time if start_time is not None else 0.0
 
             for frame in input_container.decode(input_stream):
+                if should_cancel is not None and should_cancel():
+                    raise InterruptedError("音訊轉換已取消或逾時")
                 frame_time = float(frame.pts * frame.time_base) if frame.pts is not None else current_time
 
                 if end_time is not None and frame_time >= end_time:
@@ -111,6 +116,11 @@ def convert_to_wav(
                         output_container.mux(packet)
 
                 current_time = frame_time
+
+            # 將 resampler 內部尚未輸出的尾端樣本送入 encoder，避免音訊被截短。
+            for resampled_frame in resampler.resample(None):
+                for packet in output_stream.encode(resampled_frame):
+                    output_container.mux(packet)
 
             for packet in output_stream.encode():
                 output_container.mux(packet)

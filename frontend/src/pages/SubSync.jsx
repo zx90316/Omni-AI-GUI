@@ -78,6 +78,7 @@ export default function SubSync() {
     const [videoTitle, setVideoTitle] = useState('')
     const [progress, setProgress] = useState(0)
     const [progressMessage, setProgressMessage] = useState('')
+    const [cancelling, setCancelling] = useState(false)
     const [sentences, setSentences] = useState([])
     const [activeIndex, setActiveIndex] = useState(-1)
     const [error, setError] = useState('')
@@ -246,6 +247,23 @@ export default function SubSync() {
         }
     }
 
+    const handleCancelAsr = async () => {
+        if (!taskId || cancelling) return
+        setCancelling(true)
+        try {
+            const response = await fetchWithAuth(`/api/youtube/${taskId}/cancel`, {
+                method: 'POST',
+            })
+            const data = await response.json()
+            if (!response.ok) throw new Error(data.detail || '取消任務失敗')
+            setProgressMessage(data.message || '正在安全取消...')
+        } catch (cancelError) {
+            setError(cancelError.message)
+        } finally {
+            setCancelling(false)
+        }
+    }
+
     // ── SSE 進度監聽 ──
     const listenProgress = (tid) => {
         const token = localStorage.getItem('token') || '';
@@ -290,8 +308,8 @@ export default function SubSync() {
                 fetchHistory() // 更新歷史狀態
                 // 初始化 YouTube 播放器
                 initPlayer(data.video_id, data.task_type)
-            } else if (data.status === 'failed') {
-                setError(data.error_message || '處理失敗')
+            } else if (data.status === 'failed' || data.status === 'cancelled') {
+                setError(data.status === 'cancelled' ? '任務已取消' : (data.error_message || '處理失敗'))
                 setPhase('input')
             } else {
                 // 仍在處理中，等待
@@ -813,7 +831,7 @@ export default function SubSync() {
                                             <div className="text-muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
                                                 {new Date(t.created_at).toLocaleString()} ·
                                                 <span style={{ marginLeft: 4, fontWeight: 600, color: t.status === 'completed' ? 'var(--color-primary)' : t.status === 'failed' ? 'var(--color-danger)' : 'var(--color-accent)' }}>
-                                                    {t.status === 'completed' ? '✅ 完成' : t.status === 'failed' ? '❌ 失敗' : '⏳ 處理中'}
+                                                    {t.status === 'completed' ? '✅ 完成' : t.status === 'failed' ? '❌ 失敗' : t.status === 'cancelled' ? '⏹ 已取消' : '⏳ 處理中'}
                                                 </span>
                                             </div>
                                         </div>
@@ -848,6 +866,15 @@ export default function SubSync() {
                         ></div>
                     </div>
                     <span className="subsync-progress-pct">{Math.round(progress)}%</span>
+
+                    <button
+                        className="btn btn-danger btn-sm"
+                        onClick={handleCancelAsr}
+                        disabled={cancelling}
+                        style={{ marginTop: '12px' }}
+                    >
+                        {cancelling ? '正在取消...' : '取消任務'}
+                    </button>
 
                     <div className="subsync-steps">
                         <div className={`subsync-step ${progress >= 1 ? 'active' : ''} ${progress >= 20 ? 'done' : ''}`}>

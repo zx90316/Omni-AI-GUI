@@ -4,7 +4,7 @@
 """
 import asyncio
 import io
-import shutil
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,10 +18,29 @@ from backend.database import Task, get_db, init_db
 from backend.schemas import TaskResponse, TaskDetailResponse, ConfigResponse
 from backend.auth_utils import get_current_user
 
-from backend.config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE
-from backend.asr_engine import ASREngine, detect_device
+from backend.config import (
+    ASR_MAX_UPLOAD_MB,
+    ASR_TASK_TIMEOUT_SECONDS,
+    DEFAULT_LANGUAGE,
+    DEFAULT_MODEL,
+    LANGUAGES,
+    MODELS,
+)
+from backend.asr_control import (
+    clear_cancel_event,
+    get_or_create_cancel_event,
+    request_cancel,
+)
+from backend.asr_engine import (
+    ASRCancelledError,
+    ASREngine,
+    ASRTimeoutError,
+    detect_device,
+)
+from backend.upload_utils import save_upload_limited, validated_upload_name
 
 router = APIRouter(prefix="/api", tags=["tasks"])
+logger = logging.getLogger(__name__)
 
 # ── 上傳目錄 ──
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
@@ -29,6 +48,11 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 # ── 進度追蹤（記憶體內） ──
 _progress_store: dict[int, dict] = {}
+
+
+def _start_asr_thread(args: tuple) -> None:
+    """Single dispatch seam for reliable startup handling and API tests."""
+    threading.Thread(target=_run_asr_task, args=args, daemon=True).start()
 
 
 # ============================================
@@ -76,20 +100,21 @@ async def create_task(
     import uuid
     # Generate a local video id
     video_id = f"local_{uuid.uuid4().hex[:11]}"
-    safe_name = file.filename.replace("/", "_").replace("\\", "_")
-    import os
-    ext = os.path.splitext(safe_name)[1]
+    original_name, ext = validated_upload_name(file)
     save_name = f"{video_id}{ext}"
     save_path = UPLOAD_DIR / save_name
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    await save_upload_limited(
+        file,
+        save_path,
+        max_bytes=ASR_MAX_UPLOAD_MB * 1024 * 1024,
+    )
 
     # 建立任務紀錄
     task = Task(
         owner_id=current_user["owner_id"],
         task_type="local",
         video_id=video_id,
-        filename=file.filename,
+        filename=original_name,
         status="pending",
         model=model,
         language=language,
@@ -98,18 +123,32 @@ async def create_task(
         progress=0.0,
         progress_message="等待中",
     )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    try:
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+    except Exception:
+        db.rollback()
+        save_path.unlink(missing_ok=True)
+        raise
 
     # 啟動背景 ASR 處理
     task_id = task.id
     audio_path = str(save_path)
-    threading.Thread(
-        target=_run_asr_task,
-        args=(task_id, audio_path, model, language, enable_diarization, to_traditional),
-        daemon=True,
-    ).start()
+    get_or_create_cancel_event(task_id)
+    _progress_store[task_id] = {"percent": 0, "message": "等待中", "done": False}
+    try:
+        _start_asr_thread(
+            (task_id, audio_path, model, language, enable_diarization, to_traditional)
+        )
+    except Exception as exc:
+        clear_cancel_event(task_id)
+        task.status = "failed"
+        task.error_message = f"無法啟動 ASR 背景工作: {exc}"
+        task.progress_message = "啟動失敗"
+        task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=500, detail=task.error_message) from exc
 
     return task
 
@@ -131,10 +170,21 @@ def list_tasks(
 
 
 @router.get("/tasks/media/{video_id}")
-def get_task_media(video_id: str):
+def get_task_media(
+    video_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """取得上傳的本地影音檔案"""
     if not video_id.startswith("local_"):
         raise HTTPException(status_code=400, detail="僅支援本地上傳檔案")
+    owned_task = db.query(Task).filter(
+        Task.video_id == video_id,
+        Task.owner_id == current_user["owner_id"],
+        Task.task_type == "local",
+    ).first()
+    if owned_task is None:
+        raise HTTPException(status_code=404, detail="找不到媒體檔案")
     
     from fastapi.responses import FileResponse
     # Find the file with any extension matching the video_id
@@ -182,6 +232,8 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: dict 
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status in {"pending", "processing", "cancelling"}:
+        raise HTTPException(status_code=409, detail="任務仍在執行，請先取消後再刪除")
     # If it's a local file, delete it from storage
     if task.video_id and task.video_id.startswith("local_"):
         for file_path in UPLOAD_DIR.glob(f"{task.video_id}.*"):
@@ -193,6 +245,36 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: dict 
     db.delete(task)
     db.commit()
     return {"message": "已刪除"}
+
+
+@router.post("/tasks/{task_id}/cancel")
+def cancel_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cooperatively cancel a queued or running ASR task."""
+    task = db.query(Task).filter(
+        Task.id == task_id,
+        Task.owner_id == current_user["owner_id"],
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status == "cancelled":
+        return {"status": "cancelled", "message": "任務已取消"}
+    if task.status in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="已結束的任務無法取消")
+
+    request_cancel(task_id)
+    task.status = "cancelling"
+    task.progress_message = "正在安全取消..."
+    db.commit()
+    _progress_store[task_id] = {
+        "percent": task.progress or 0,
+        "message": task.progress_message,
+        "done": False,
+    }
+    return {"status": "cancelling", "message": task.progress_message}
 
 
 # ============================================
@@ -208,18 +290,42 @@ async def task_progress(task_id: int, db: Session = Depends(get_db), current_use
 
     async def event_generator():
         import json
-        last_progress = -1
+        last_state = None
         while True:
             progress_data = _progress_store.get(task_id)
-            if progress_data:
-                current = progress_data.get("percent", 0)
-                if current != last_progress:
-                    last_progress = current
-                    data = json.dumps(progress_data, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
+            if progress_data is None:
+                # 記憶體進度會在服務重啟時消失；以資料庫狀態作為可靠 fallback。
+                db.expire_all()
+                current_task = db.query(Task).filter(
+                    Task.id == task_id,
+                    Task.owner_id == current_user["owner_id"],
+                ).first()
+                if current_task is None:
+                    progress_data = {"percent": 0, "message": "任務不存在", "done": True}
+                else:
+                    done = current_task.status in {"completed", "failed", "cancelled"}
+                    message = current_task.progress_message or current_task.status
+                    if current_task.status == "failed" and current_task.error_message:
+                        message = f"失敗: {current_task.error_message}"
+                    progress_data = {
+                        "percent": current_task.progress or 0,
+                        "message": message,
+                        "done": done,
+                    }
 
-                if progress_data.get("done"):
-                    break
+            current_state = (
+                progress_data.get("percent", 0),
+                progress_data.get("message", ""),
+                progress_data.get("done", False),
+            )
+            if current_state != last_state:
+                last_state = current_state
+                data = json.dumps(progress_data, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+            if progress_data.get("done"):
+                _progress_store.pop(task_id, None)
+                break
             await asyncio.sleep(0.5)
 
     return StreamingResponse(
@@ -430,9 +536,12 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
     from backend.database import SessionLocal
 
     db = SessionLocal()
+    task = None
+    cancel_event = get_or_create_cancel_event(task_id)
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
         if not task:
+            _progress_store.pop(task_id, None)
             return
 
         task.status = "processing"
@@ -447,7 +556,11 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
             }
             task.progress = percent
             task.progress_message = message
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.warning("任務 %s 進度寫入失敗，ASR 將繼續", task_id, exc_info=True)
 
         model_name = MODELS[model]
         lang_code = LANGUAGES[language]
@@ -456,6 +569,8 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
             model_name=model_name,
             device="auto",
             on_progress=on_progress,
+            should_cancel=cancel_event.is_set,
+            timeout_seconds=ASR_TASK_TIMEOUT_SECONDS,
         )
 
         result = engine.run(
@@ -464,6 +579,8 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
             enable_diarization=enable_diarization,
             to_traditional=to_traditional,
         )
+        if cancel_event.is_set():
+            raise ASRCancelledError("ASR 任務已取消（結果寫入前）")
 
         task.status = "completed"
         task.raw_text = result["raw_text"]
@@ -472,17 +589,56 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
         task.set_diarization_result(result.get("diarization_result"))
         task.set_diar_segments(result.get("diar_segments", []))
         task.progress = 100.0
-        task.progress_message = "完成"
+        warnings = result.get("warnings", [])
+        task.progress_message = f"完成（{'；'.join(warnings)}）" if warnings else "完成"
         task.completed_at = datetime.now(timezone.utc)
         db.commit()
 
-        _progress_store[task_id] = {"percent": 100, "message": "完成", "done": True}
+        # 終態已持久化，移除記憶體快取；SSE 會從資料庫讀取可靠終態。
+        _progress_store.pop(task_id, None)
 
+    except ASRCancelledError as e:
+        logger.info("ASR 任務 %s 已取消: %s", task_id, e)
+        db.rollback()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "cancelled"
+            task.error_message = None
+            task.progress_message = "已取消"
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        _progress_store.pop(task_id, None)
+    except ASRTimeoutError as e:
+        logger.error("ASR 任務 %s 逾時: %s", task_id, e)
+        db.rollback()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "failed"
+            task.error_message = str(e)
+            task.progress_message = "處理逾時"
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        _progress_store.pop(task_id, None)
     except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.progress_message = "處理失敗"
-        db.commit()
-        _progress_store[task_id] = {"percent": 0, "message": f"失敗: {e}", "done": True}
+        logger.exception("ASR 任務 %s 失敗", task_id)
+        db.rollback()
+        failure_persisted = False
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "failed"
+            task.error_message = str(e)
+            task.progress_message = "處理失敗"
+            task.completed_at = datetime.now(timezone.utc)
+            try:
+                db.commit()
+                failure_persisted = True
+            except Exception:
+                db.rollback()
+                logger.exception("ASR 任務 %s 失敗狀態無法寫入資料庫", task_id)
+        if failure_persisted:
+            _progress_store.pop(task_id, None)
+        else:
+            _progress_store[task_id] = {"percent": 0, "message": f"失敗: {e}", "done": True}
     finally:
+        clear_cancel_event(task_id)
         db.close()

@@ -1,0 +1,3 @@
+# Official GLM-OCR SDK. Qwen3-ASR now uses the HF-native checkpoint, so both
+# features can safely share the project's pinned Transformers 5.x runtime.
+glmocr[selfhosted]==0.1.5

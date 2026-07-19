@@ -10,6 +10,8 @@ from typing import Any, Dict, Generator, List
 
 import torch
 
+from backend.model_registry import MODEL_IDS
+
 from backend.ocr_engine import _call_glm_ocr, pdf_pages_to_images, _pil_to_base64
 
 try:
@@ -38,7 +40,7 @@ def load_clip_model():
     from transformers import CLIPModel, CLIPProcessor
     from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
 
-    model_name = "openai/clip-vit-large-patch14"
+    model_name = MODEL_IDS["clip"]
 
     if is_offline_mode() and not is_model_cached(model_name):
         raise RuntimeError(make_offline_error_message(model_name))
@@ -219,7 +221,8 @@ def search_similar_pages(
     exclude_texts = [t.strip().lower() for t in must_exclude.split(",") if t.strip()]
 
     import os
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ocr_provider = os.getenv("OCR_PROVIDER", "local")
+    ocr_model = os.getenv("OCR_MODEL", MODEL_IDS["glm_ocr"])
     # 這裡使用一個很泛用的 prompt 來把圖轉為文字，方便關鍵字比對
     ocr_prompt = "OCR"
 
@@ -243,7 +246,13 @@ def search_similar_pages(
             }
             
             # 使用高解析度圖片呼叫 OCR
-            ocr_result = _call_glm_ocr(img_b64, ocr_prompt, raw_mode=True)
+            ocr_result = _call_glm_ocr(
+                img_b64,
+                ocr_prompt,
+                raw_mode=True,
+                provider=ocr_provider,
+                model=ocr_model,
+            )
             
             # 因為我們設定 raw_mode=True，原始回覆一定在 raw 中。
             page_text = ocr_result.get("raw", "").lower()

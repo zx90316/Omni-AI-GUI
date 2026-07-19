@@ -3,6 +3,7 @@
 YouTube SubSync — 影片字幕同步 API 路由
 """
 import asyncio
+import logging
 import re
 import threading
 import tempfile
@@ -26,13 +27,33 @@ import os
 import uuid
 import shutil
 
-from backend.config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE, FFMPEG_DIR
-from backend.asr_engine import ASREngine
+from backend.config import (
+    ASR_MAX_UPLOAD_MB,
+    ASR_TASK_TIMEOUT_SECONDS,
+    DEFAULT_LANGUAGE,
+    DEFAULT_MODEL,
+    FFMPEG_DIR,
+    LANGUAGES,
+    MODELS,
+)
+from backend.asr_control import (
+    clear_cancel_event,
+    get_or_create_cancel_event,
+    request_cancel,
+)
+from backend.asr_engine import ASRCancelledError, ASREngine, ASRTimeoutError
+from backend.upload_utils import save_upload_limited, validated_upload_name
 
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
+logger = logging.getLogger(__name__)
 
 # ── 進度追蹤（記憶體內） ──
 _yt_progress_store: dict[int, dict] = {}
+
+
+def _start_youtube_thread(args: tuple) -> None:
+    """Single dispatch seam for reliable startup handling and API tests."""
+    threading.Thread(target=_run_youtube_task, args=args, daemon=True).start()
 
 # ── 暫存目錄 ──
 TEMP_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "youtube"
@@ -60,7 +81,12 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 
-def download_audio(video_id: str, output_dir: Path, on_progress=None) -> dict:
+def download_audio(
+    video_id: str,
+    output_dir: Path,
+    on_progress=None,
+    should_cancel=None,
+) -> dict:
     """
     使用 yt-dlp 下載 YouTube 音頻
 
@@ -75,6 +101,8 @@ def download_audio(video_id: str, output_dir: Path, on_progress=None) -> dict:
     info = {"title": "", "audio_path": ""}
 
     def progress_hook(d):
+        if should_cancel is not None and should_cancel():
+            raise ASRCancelledError("YouTube 音訊下載已取消")
         if d["status"] == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes", 0)
@@ -97,13 +125,27 @@ def download_audio(video_id: str, output_dir: Path, on_progress=None) -> dict:
         "ffmpeg_location": FFMPEG_DIR,
         "quiet": True,
         "no_warnings": True,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        meta = ydl.extract_info(url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            meta = ydl.extract_info(url, download=True)
+    except Exception as exc:
+        if should_cancel is not None and should_cancel():
+            raise ASRCancelledError("YouTube 音訊下載已取消") from exc
+        raise
+    if should_cancel is not None and should_cancel():
+        raise ASRCancelledError("YouTube 音訊下載已取消")
+    if meta:
         info["title"] = meta.get("title", "未知標題")
         # yt-dlp 轉檔後檔名為 .wav
         info["audio_path"] = str(output_dir / f"{video_id}.wav")
+
+    if not Path(info["audio_path"]).is_file():
+        raise RuntimeError("YouTube 音訊下載完成，但找不到轉換後的 WAV 檔案")
 
     return info
 
@@ -157,11 +199,18 @@ def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db), c
 
     # 啟動背景處理
     task_id = task.id
-    threading.Thread(
-        target=_run_youtube_task,
-        args=(task_id, video_id, req.model, req.language),
-        daemon=True,
-    ).start()
+    get_or_create_cancel_event(task_id)
+    _yt_progress_store[task_id] = {"percent": 0, "message": "等待中", "done": False}
+    try:
+        _start_youtube_thread((task_id, video_id, req.model, req.language))
+    except Exception as exc:
+        clear_cancel_event(task_id)
+        task.status = "failed"
+        task.error_message = f"無法啟動 YouTube 背景工作: {exc}"
+        task.progress_message = "啟動失敗"
+        task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=500, detail=task.error_message) from exc
 
     return task
 
@@ -184,22 +233,23 @@ async def analyze_youtube_upload(
 
     # Generate a local video id
     video_id = f"local_{uuid.uuid4().hex[:11]}"
-    safe_name = file.filename.replace("/", "_").replace("\\", "_")
+    original_name, ext = validated_upload_name(file)
     
     # Save the file locally
     # We will use the original extension for playback compatibility
-    ext = os.path.splitext(safe_name)[1]
     save_path = TEMP_DIR / f"{video_id}{ext}"
-    
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    await save_upload_limited(
+        file,
+        save_path,
+        max_bytes=ASR_MAX_UPLOAD_MB * 1024 * 1024,
+    )
 
     # 建立任務
     task = Task(
         owner_id=current_user["owner_id"],
         task_type="subsync_upload",
         video_id=video_id,
-        filename=file.filename,
+        filename=original_name,
         status="pending",
         model=model,
         language=language,
@@ -208,26 +258,49 @@ async def analyze_youtube_upload(
         progress=0.0,
         progress_message="等待中",
     )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    try:
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+    except Exception:
+        db.rollback()
+        save_path.unlink(missing_ok=True)
+        raise
 
     # 啟動背景處理
     task_id = task.id
-    threading.Thread(
-        target=_run_youtube_task,
-        args=(task_id, video_id, model, language),
-        daemon=True,
-    ).start()
+    get_or_create_cancel_event(task_id)
+    _yt_progress_store[task_id] = {"percent": 0, "message": "等待中", "done": False}
+    try:
+        _start_youtube_thread((task_id, video_id, model, language))
+    except Exception as exc:
+        clear_cancel_event(task_id)
+        task.status = "failed"
+        task.error_message = f"無法啟動 YouTube 背景工作: {exc}"
+        task.progress_message = "啟動失敗"
+        task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=500, detail=task.error_message) from exc
 
     return task
 
 
 @router.get("/media/{video_id}")
-def get_youtube_media(video_id: str):
+def get_youtube_media(
+    video_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """取得上傳的本地影音檔案"""
     if not video_id.startswith("local_"):
         raise HTTPException(status_code=400, detail="僅支援本地上傳檔案")
+    owned_task = db.query(Task).filter(
+        Task.video_id == video_id,
+        Task.owner_id == current_user["owner_id"],
+        Task.task_type == "subsync_upload",
+    ).first()
+    if owned_task is None:
+        raise HTTPException(status_code=404, detail="找不到媒體檔案")
     
     # Find the file with any extension matching the video_id
     for file_path in TEMP_DIR.glob(f"{video_id}.*"):
@@ -314,6 +387,8 @@ def delete_youtube_task(task_id: int, db: Session = Depends(get_db), current_use
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status in {"pending", "processing", "cancelling"}:
+        raise HTTPException(status_code=409, detail="任務仍在執行，請先取消後再刪除")
 
     # If it's a local file, delete it from storage
     if task.video_id and task.video_id.startswith("local_"):
@@ -327,6 +402,37 @@ def delete_youtube_task(task_id: int, db: Session = Depends(get_db), current_use
     db.commit()
     return None
 
+
+@router.post("/{task_id}/cancel")
+def cancel_youtube_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cooperatively cancel a queued/download/running YouTube ASR task."""
+    task = db.query(Task).filter(
+        Task.id == task_id,
+        Task.owner_id == current_user["owner_id"],
+        Task.task_type.in_(("youtube", "subsync_upload")),
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status == "cancelled":
+        return {"status": "cancelled", "message": "任務已取消"}
+    if task.status in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="已結束的任務無法取消")
+
+    request_cancel(task_id)
+    task.status = "cancelling"
+    task.progress_message = "正在安全取消..."
+    db.commit()
+    _yt_progress_store[task_id] = {
+        "percent": task.progress or 0,
+        "message": task.progress_message,
+        "done": False,
+    }
+    return {"status": "cancelling", "message": task.progress_message}
+
 @router.get("/{task_id}/progress")
 async def youtube_task_progress(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """SSE 即時進度推送"""
@@ -336,18 +442,41 @@ async def youtube_task_progress(task_id: int, db: Session = Depends(get_db), cur
 
     async def event_generator():
         import json
-        last_progress = -1
+        last_state = None
         while True:
             progress_data = _yt_progress_store.get(task_id)
-            if progress_data:
-                current = progress_data.get("percent", 0)
-                if current != last_progress:
-                    last_progress = current
-                    data = json.dumps(progress_data, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
+            if progress_data is None:
+                db.expire_all()
+                current_task = db.query(Task).filter(
+                    Task.id == task_id,
+                    Task.owner_id == current_user["owner_id"],
+                ).first()
+                if current_task is None:
+                    progress_data = {"percent": 0, "message": "任務不存在", "done": True}
+                else:
+                    done = current_task.status in {"completed", "failed", "cancelled"}
+                    message = current_task.progress_message or current_task.status
+                    if current_task.status == "failed" and current_task.error_message:
+                        message = f"失敗: {current_task.error_message}"
+                    progress_data = {
+                        "percent": current_task.progress or 0,
+                        "message": message,
+                        "done": done,
+                    }
 
-                if progress_data.get("done"):
-                    break
+            current_state = (
+                progress_data.get("percent", 0),
+                progress_data.get("message", ""),
+                progress_data.get("done", False),
+            )
+            if current_state != last_state:
+                last_state = current_state
+                data = json.dumps(progress_data, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+            if progress_data.get("done"):
+                _yt_progress_store.pop(task_id, None)
+                break
             await asyncio.sleep(0.5)
 
     return StreamingResponse(
@@ -422,9 +551,13 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
     from backend.database import SessionLocal
 
     db = SessionLocal()
+    task = None
+    download_work_dir = None
+    cancel_event = get_or_create_cancel_event(task_id)
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
         if not task:
+            _yt_progress_store.pop(task_id, None)
             return
 
         task.status = "processing"
@@ -439,7 +572,11 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
             }
             task.progress = percent
             task.progress_message = message
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.warning("YouTube 任務 %s 進度寫入失敗，ASR 將繼續", task_id, exc_info=True)
 
         # ── 1. 下載或取得音頻 ──
         is_local = video_id.startswith("local_")
@@ -459,7 +596,15 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
             # Use original file for ASR, model can usually handle common video/audio formats directly via ffmpeg inside funasr
         else:
             on_progress(1, "正在下載 YouTube 音頻...")
-            audio_info = download_audio(video_id, TEMP_DIR, on_progress=on_progress)
+            # 同一影片可被同時提交；每個任務使用獨立下載目錄避免互相覆寫。
+            download_work_dir = TEMP_DIR / f"task_{task_id}"
+            download_work_dir.mkdir(parents=True, exist_ok=True)
+            audio_info = download_audio(
+                video_id,
+                download_work_dir,
+                on_progress=on_progress,
+                should_cancel=cancel_event.is_set,
+            )
 
             task.filename = audio_info["title"]
             db.commit()
@@ -479,6 +624,8 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
             model_name=model_name,
             device="auto",
             on_progress=on_asr_progress,
+            should_cancel=cancel_event.is_set,
+            timeout_seconds=ASR_TASK_TIMEOUT_SECONDS,
         )
 
         result = engine.run(
@@ -487,30 +634,73 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
             enable_diarization=False,  # YouTube 不需要語者分離
             to_traditional=True,
         )
+        if cancel_event.is_set():
+            raise ASRCancelledError("YouTube ASR 任務已取消（結果寫入前）")
 
         # ── 3. 儲存結果 ──
         task.status = "completed"
+        task.raw_text = result["raw_text"]
         task.set_sentences(result["sentences"])
         task.set_chars(result.get("chars", []))
+        task.set_diar_segments(result.get("diar_segments", []))
         task.progress = 100.0
-        task.progress_message = "完成"
+        warnings = result.get("warnings", [])
+        task.progress_message = f"完成（{'；'.join(warnings)}）" if warnings else "完成"
         task.completed_at = datetime.now(timezone.utc)
         db.commit()
 
-        _yt_progress_store[task_id] = {"percent": 100, "message": "完成", "done": True}
+        # 終態已持久化，移除記憶體快取；SSE 會從資料庫讀取可靠終態。
+        _yt_progress_store.pop(task_id, None)
 
-        # 清理暫存音頻
-        try:
-            if not is_local and Path(audio_path).exists():
-                Path(audio_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-
+    except ASRCancelledError as e:
+        logger.info("YouTube ASR 任務 %s 已取消: %s", task_id, e)
+        db.rollback()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "cancelled"
+            task.error_message = None
+            task.progress_message = "已取消"
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        _yt_progress_store.pop(task_id, None)
+    except ASRTimeoutError as e:
+        logger.error("YouTube ASR 任務 %s 逾時: %s", task_id, e)
+        db.rollback()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "failed"
+            task.error_message = str(e)
+            task.progress_message = "處理逾時"
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        _yt_progress_store.pop(task_id, None)
     except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.progress_message = "處理失敗"
-        db.commit()
-        _yt_progress_store[task_id] = {"percent": 0, "message": f"失敗: {e}", "done": True}
+        logger.exception("YouTube ASR 任務 %s 失敗", task_id)
+        db.rollback()
+        failure_persisted = False
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is not None:
+            task.status = "failed"
+            task.error_message = str(e)
+            task.progress_message = "處理失敗"
+            task.completed_at = datetime.now(timezone.utc)
+            try:
+                db.commit()
+                failure_persisted = True
+            except Exception:
+                db.rollback()
+                logger.exception("YouTube ASR 任務 %s 失敗狀態無法寫入資料庫", task_id)
+        if failure_persisted:
+            _yt_progress_store.pop(task_id, None)
+        else:
+            _yt_progress_store[task_id] = {"percent": 0, "message": f"失敗: {e}", "done": True}
     finally:
+        clear_cancel_event(task_id)
+        if download_work_dir is not None:
+            try:
+                shutil.rmtree(download_work_dir)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                logger.warning("無法清理 YouTube 任務 %s 暫存目錄", task_id, exc_info=True)
         db.close()

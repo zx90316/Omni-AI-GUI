@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+requirements_temp.txt
 results/
 dist/
 build/
@@ -22,3 +23,4 @@ ffmpeg-master-latest-win64-gpl-shared
 omni_ai.db
 _internal/
 .pnpm-store/
+.manager/
