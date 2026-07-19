@@ -14,7 +14,6 @@ from backend.database import fail_interrupted_tasks, init_db
 from backend.auth_utils import get_current_user
 from backend.routers.tasks import router as tasks_router
 from backend.routers.youtube import router as youtube_router
-from backend.routers.llm import router as llm_router
 from backend.routers.auth import router as auth_router
 from backend.routers.ocr import router as ocr_router
 from backend.routers.clip_search import router as clip_search_router
@@ -22,7 +21,7 @@ from backend.routers.workflow import router as workflow_router
 from backend.routers.semantic import router as semantic_router
 from backend.routers.system import router as system_router
 from backend.semantic_engine import init_semantic_models, start_worker, stop_worker_and_cleanup
-from backend.network_utils import check_huggingface_reachable, set_hf_offline_env, unset_hf_offline_env
+from backend.network_utils import set_hf_offline_env
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,6 @@ app.include_router(tasks_router, dependencies=auth_required)
 app.include_router(youtube_router, dependencies=auth_required)
 
 # ── 路由掛載（無需驗證）──
-app.include_router(llm_router)
 app.include_router(auth_router)
 app.include_router(ocr_router)
 app.include_router(clip_search_router)
@@ -72,21 +70,17 @@ app.include_router(system_router)
 
 
 async def startup():
-    """啟動時初始化資料庫、偵測網路狀態並啟動語意模型背景程序"""
+    """Initialize storage and load only models already installed by Manager."""
     app.state.ready = False
     init_db()
     interrupted_count = fail_interrupted_tasks()
     if interrupted_count:
         logger.warning("已將 %d 個因服務重啟中斷的任務標記為失敗", interrupted_count)
 
-    # 先設離線模式，避免載入模型時因代理逾時卡住
+    # Manager exclusively owns model downloads. Inference must remain local-only
+    # so a feature invocation cannot silently start a network download.
     set_hf_offline_env()
-
-    if check_huggingface_reachable():
-        unset_hf_offline_env()
-        logger.info("HuggingFace Hub 連線正常，已解除離線模式")
-    else:
-        logger.warning("HuggingFace Hub 不可達，維持離線模式")
+    logger.info("模型載入已設為 local-only；缺少模型時請使用 Manager 下載")
 
     import asyncio
     

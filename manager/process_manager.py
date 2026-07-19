@@ -7,7 +7,6 @@
 """
 import os
 import json
-import signal
 import subprocess
 import threading
 import time
@@ -26,12 +25,20 @@ from manager.config import (
     is_node_modules_exists,
     load_config,
 )
+from manager.env_schema import validate_env_file
 
 logger = logging.getLogger(__name__)
 STATE_DIR = PROJECT_ROOT / ".manager"
 LOG_DIR = STATE_DIR / "logs"
 PROCESS_STATE_FILE = STATE_DIR / "processes.json"
 MAX_LOG_BYTES = 10 * 1024 * 1024
+
+
+def _service_creation_flags() -> int:
+    """Run Windows services without allocating a visible console window."""
+    if os.name != "nt":
+        return 0
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _health_url(host: str, port: int, path: str = "/") -> str:
@@ -206,7 +213,7 @@ class ManagedProcess:
                     errors="replace" if log_stream is None else None,
                     cwd=str(self.cwd),
                     env=run_env,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+                    creationflags=_service_creation_flags(),
                 )
             finally:
                 if log_stream is not None:
@@ -430,10 +437,7 @@ class ManagedProcess:
         if process.poll() is not None:
             return
         try:
-            if os.name == "nt" and hasattr(signal, "CTRL_BREAK_EVENT"):
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                process.terminate()
+            process.terminate()
             process.wait(timeout=timeout)
             return
         except (OSError, subprocess.TimeoutExpired):
@@ -774,8 +778,24 @@ class ProcessManager:
             health_probe_timeout=self._config.get("health_probe_timeout", 2),
         )
 
+    def _env_ready(self, service_name: str) -> bool:
+        """Block every service start until the project .env passes validation."""
+        result = validate_env_file()
+        if result.valid:
+            return True
+        if self.on_output:
+            self.on_output(
+                service_name,
+                f"⛔ 無法啟動：{result.summary}。請先到「設定 → 設定 .env 參數」完成設定。",
+            )
+            for error in result.errors[:5]:
+                self.on_output(service_name, f"   - {error}")
+        return False
+
     def start_backend(self) -> bool:
         """啟動 Backend"""
+        if not self._env_ready("backend"):
+            return False
         if not is_venv_exists():
             if self.on_output:
                 self.on_output("backend", "❌ .venv 不存在，請先安裝依賴")
@@ -796,6 +816,8 @@ class ProcessManager:
 
     def restart_backend(self) -> bool:
         """重啟 Backend"""
+        if not self._env_ready("backend"):
+            return False
         if not is_venv_exists():
             if self.on_output:
                 self.on_output("backend", "❌ .venv 不存在或已損壞，請先安裝依賴")
@@ -808,6 +830,8 @@ class ProcessManager:
 
     def start_frontend(self) -> bool:
         """啟動 Frontend"""
+        if not self._env_ready("frontend"):
+            return False
         if not is_node_modules_exists():
             if self.on_output:
                 self.on_output("frontend", "❌ node_modules 不存在，請先安裝前端依賴")
@@ -828,6 +852,8 @@ class ProcessManager:
 
     def restart_frontend(self) -> bool:
         """重啟 Frontend"""
+        if not self._env_ready("frontend"):
+            return False
         if not is_node_modules_exists():
             if self.on_output:
                 self.on_output("frontend", "❌ node_modules 不存在，請先安裝前端依賴")
@@ -922,6 +948,9 @@ class ProcessManager:
 
                     if self._health_stop_event.wait(restart_delay):
                         break
+                    if not self._env_ready(name):
+                        proc.give_up()
+                        continue
                     proc.start()
                     self._restart_counts[name] = count + 1
                     self._health_failures[name] = 0
@@ -953,6 +982,10 @@ class ProcessManager:
                         )
                     if self._health_stop_event.wait(restart_delay):
                         break
+                    if not self._env_ready(name):
+                        proc.stop()
+                        proc.give_up()
+                        continue
                     proc.restart()
                     self._restart_counts[name] = count + 1
                     self._health_failures[name] = 0

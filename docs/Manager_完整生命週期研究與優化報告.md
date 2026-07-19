@@ -6,7 +6,9 @@
 
 Manager 已具備安裝環境、啟停前後端、程序輸出、基本存活監控、更新、設定與關閉處理，但原本不是完整的服務控制面：模型只能在功能首次執行時被動下載；模型檢查只判斷 `snapshots/` 是否非空；程序啟動成功被過早視為服務可用；設定更新、監督意圖與實際程序狀態也沒有完整同步。
 
-本次已完成模型預下載、存在性檢查、結構化下載進度與取消，也補齊 HTTP readiness/health supervision、安全首次部署、持久化日誌、PID 接管與 Git 更新前置檢查。Manager 現在能區分「程序已建立」與「服務已就緒」，在 GUI 關閉後保留服務，並於下次啟動驗證 PID、建立時間、命令、工作目錄與健康端點後重新接管。原先盤點出的 P0/P1 與主要 P2 生命週期缺口均已處理。
+本次已完成模型預下載、存在性檢查、結構化下載進度與取消，也補齊 HTTP readiness/health supervision、安全首次部署、持久化日誌、PID 接管與 Git 更新前置檢查。Manager 現在能區分「程序已建立」與「服務已就緒」，在 GUI 關閉後保留服務，並於下次啟動驗證 PID、建立時間、命令、工作目錄與健康端點後重新接管。
+
+實機下載又發現一項 P0 整合漂移：Manager 把 PP-DocLayoutV3 當成 PaddleX 模型並呼叫未宣告的 `paddlex.create_model()`，但專案固定的 `glmocr 0.1.5` 實際透過 Transformers 載入 `PaddlePaddle/PP-DocLayoutV3_safetensors`。因此第 9 個模型必然出現 `No module named 'paddlex'`，即使補裝 PaddleX，下載位置與格式也不是 Backend 的實際讀取來源。本次已把 registry、下載 worker、快取檢查、GUI 與文件統一為同一個 Hugging Face checkpoint，並以 133,289,651 bytes 的實際下載完成端到端驗證。
 
 ## 生命週期盤點
 
@@ -87,21 +89,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    R[共享 model_registry] --> P{模型來源}
-    P -->|Hugging Face| C[Hub snapshot 完整性檢查]
-    P -->|PaddleX| X[official_models 推論檔檢查]
+    R[共享 model_registry] --> C[Hub snapshot 與權重完整性檢查]
     R --> D[Manager 選擇模型]
     D --> W[.venv model_downloader]
-    W --> Q{下載 provider}
-    Q -->|Hugging Face| S[snapshot_download 完整倉庫]
-    Q -->|PaddleX| Y[create_model 下載官方推論模型]
+    W --> S[snapshot_download 完整倉庫]
     S --> V[local_files_only 驗證]
-    Y --> X
     V --> C
     C --> API[/api/system/status]
     C --> UI[Manager 已存在/缺少/不完整]
-    X --> API
-    X --> UI
     R --> E[ASR / OCR / CLIP / Semantic 載入器]
 ```
 
@@ -115,18 +110,18 @@ flowchart LR
 | 以圖搜頁 | `openai/clip-vit-large-patch14` |
 | Semantic | `BAAI/bge-reranker-v2-m3`、`BAAI/bge-m3` |
 | OCR | `zai-org/GLM-OCR` |
-| OCR 版面 | PaddleX `PP-DocLayoutV3`（選用） |
+| OCR 版面 | `PaddlePaddle/PP-DocLayoutV3_safetensors`（Transformers、選用） |
 
 ### 存在性判定
 
 原判定只要 `snapshots/` 內有任何項目即回傳 `cached=true`，中斷下載、空 snapshot、損壞 symlink 或 `refs/main` 指向不存在 revision 都可能被誤判。本次改為：
 
 1. Hugging Face 模型依 `HF_HUB_CACHE`、舊版 `HUGGINGFACE_HUB_CACHE`、`HF_HOME`、預設目錄順序解析快取。
-2. 驗證模型 repo、snapshot、可讀檔案與 `refs/main` 指向。
+2. 驗證模型 repo、snapshot、可讀檔案、模型權重與 `refs/main` 指向；只有設定檔而沒有權重不再視為 ready。
 3. 掃描 `*.incomplete` 與 broken symlink。
 4. 回傳 `ready`、`partial`、`missing`，並保留舊版 API 的 `cached` 布林欄位。
 5. Hugging Face 主動下載使用 `snapshot_download()` 取得完整 repository；完成後再以 `local_files_only=True` 驗證。
-6. PP-DocLayoutV3 不誤用 Hugging Face 快取；改由 PaddleX 公開的 `create_model()` 下載到 GLM-OCR 實際使用的 `PADDLE_PDX_CACHE_HOME/official_models`，並檢查推論設定、權重與暫存檔。
+6. PP-DocLayoutV3 使用與 `glmocr 0.1.5` 預設設定相同的 `PaddlePaddle/PP-DocLayoutV3_safetensors`；Manager 與 Backend 共用 Hugging Face cache，不再依賴或顯示未使用的 PaddleX cache。
 7. 下載工作器以 JSONL 事件回報模型、已完成位元組、總位元組、百分比與驗證階段；舊版 Hub 無法預估總量時改顯示不確定進度。
 8. GUI 可取消目前工作器；已下載的 Hub blob 保留，下一次可續用快取，不會把部分下載誤標成完成。
 
@@ -137,12 +132,14 @@ Hugging Face 官方說明指出，Hub cache 由 `refs`、`blobs`、`snapshots` �
 - [Hugging Face：Downloading files](https://huggingface.co/docs/huggingface_hub/package_reference/file_download)
 - [Hugging Face：Understand caching](https://huggingface.co/docs/huggingface_hub/en/guides/manage-cache)
 - [GLM-OCR 官方 GitHub](https://github.com/zai-org/GLM-OCR)
-- [PaddleX：Layout Analysis / PP-DocLayoutV3](https://paddlepaddle.github.io/PaddleX/latest/en/module_usage/tutorials/ocr_modules/layout_analysis.html)
+- [Transformers：PP-DocLayoutV3](https://huggingface.co/docs/transformers/model_doc/pp_doclayout_v3)
+- [PaddlePaddle：PP-DocLayoutV3 safetensors 模型卡](https://huggingface.co/PaddlePaddle/PP-DocLayoutV3_safetensors)
 
 ## 缺口、風險與處置
 
 | 優先級 | 缺口 | 影響 | 本次狀態 |
 |---|---|---|---|
+| P0 | PP-DocLayoutV3 下載 provider 與 runtime 不一致 | 固定在第 9 個模型因缺少 `paddlex` 失敗；即使安裝也不是 Backend 使用的 checkpoint | 已完成，統一為 Transformers/HF checkpoint 並實際下載驗證 |
 | P0 | 無法預先下載模型 | 第一次執行功能才下載，長任務容易超時或失敗 | 已完成 |
 | P0 | 模型快取僅檢查非空目錄 | 中斷下載可能被誤判為存在 | 已完成 |
 | P1 | 模型 ID 分散硬編碼 | ASR/OCR/狀態清單容易漂移 | 已完成，共享 registry |
@@ -160,17 +157,18 @@ Hugging Face 官方說明指出，Hub cache 由 `refs`、`blobs`、`snapshots` �
 
 ## 驗證結果
 
-- Manager/model/ASR/OCR 針對性測試共 42 項：40 通過，2 項因隔離 runtime 未安裝 FastAPI、官方 glmocr 而明確跳過，無失敗。
+- 全套 `unittest discover` 以 UTF-8 模式執行 58 項測試，58 項全部通過；Manager lifecycle 16 項與 model management 17 項針對性測試，共 33 項全部通過。
 - Manager headless 測試使用臨時 HTTP server 驗證 wildcard URL、readiness 成功、readiness timeout、持久化日誌、接管與停止契約、命令白名單、設定原子存取、dirty worktree 阻擋更新。
-- 模型測試涵蓋 Hugging Face 與 PaddleX 的 missing/ready/partial/broken-ref、cache 優先序、provider 派送、registry 唯一性、JSONL event parser、取消控制器與損壞 `.venv` 阻擋下載。
+- 模型測試涵蓋 Hugging Face 的 missing/ready/partial/config-only/broken-ref、cache 優先序、layout checkpoint 派送、registry 唯一性、JSONL event parser、取消控制器與損壞 `.venv` 阻擋下載。
 - Python 語法編譯通過。
-- Frontend production build 通過（Vite 6.4.1，57 modules）。
-- 全套 discovery 仍會載入既有的手動整合腳本：`test_auth.py`、`test_email.py` 在此隔離 runtime 缺少 `requests`；`test_merge.py`、`test_split.py` 會在 CP950 import 階段輸出 emoji。這四項不是本次 Manager regression，正式專案依賴已包含 `requests`。
-- 目前專案 `.venv` 不可執行，指向已移除的 `C:\Users\zx020\AppData\Local\Programs\Python\Python312\python.exe`；實機模型權重下載與完整 Backend 啟動需先由 Manager 重建 `.venv`。
+- Frontend production build 通過（Vite 6.4.3，59 modules）。
+- Windows 預設 CP950 下，既有的 `test_merge.py`、`test_split.py` 會在 import 階段直接輸出 emoji，須用 `python -X utf8 -m unittest discover ...`；這是測試啟動環境限制，不是產品程式失敗。
+- 目前專案 `.venv` 可正常執行；已用 Manager worker 實際下載並完成 `PaddlePaddle/PP-DocLayoutV3_safetensors` 的 `local_files_only` 驗證，快取 revision 為 `97d101e6db2642e162a1d05392d1b0231c91033e`。
+- 下載後在 `HF_HUB_OFFLINE=1` 與 `TRANSFORMERS_OFFLINE=1` 下，`glmocr` 成功把模型載入為 `PPDocLayoutV3ForObjectDetection` 並配置到 `cuda:0`，確認快取可被實際 runtime 使用。
 
 ## 後續維護原則
 
 1. 變更服務啟動參數時，同步更新 readiness contract 與 headless lifecycle tests。
 2. 新增本機模型時只修改共享 `model_registry`，並為 provider 補上下載與 cache 驗證測試。
-3. 發佈前在已重建的 Python 3.12 `.venv` 執行一次 Backend live/ready smoke test，以及至少一個小型模型的實際下載/取消/續傳測試。
-4. 若要讓全套 `unittest discover` 成為 CI gate，應把四個既有手動腳本改為可明確跳過的整合測試，並強制測試程序使用 UTF-8 console。
+3. 發佈前在 Python 3.12 `.venv` 執行一次 Backend live/ready smoke test，以及至少一個小型模型的實際下載/取消/續傳測試。
+4. CI 在 Windows 應固定啟用 Python UTF-8 mode，避免既有手動驗證腳本的 emoji 輸出受系統 code page 影響。

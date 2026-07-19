@@ -38,18 +38,15 @@ MODEL_SPECS = (
     ModelSpec(
         "pp_doclayout",
         "PP-DocLayoutV3",
-        "PP-DocLayoutV3",
+        "PaddlePaddle/PP-DocLayoutV3_safetensors",
         "OCR 版面分析",
-        source="paddlex",
         optional=True,
     ),
 )
 
 MODEL_SPECS_BY_KEY = {spec.key: spec for spec in MODEL_SPECS}
 MODEL_IDS = {spec.key: spec.model_id for spec in MODEL_SPECS}
-REQUIRED_MODELS = {
-    spec.key: spec.model_id for spec in MODEL_SPECS if spec.source == "huggingface"
-}
+REQUIRED_MODELS = {spec.key: spec.model_id for spec in MODEL_SPECS}
 
 
 def get_model_spec(key: str) -> ModelSpec:

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { fetchWithAuth } from '../utils/api.js'
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 
 const DEFAULT_FIELDS = [
     { key: '製作日期' },
@@ -47,6 +48,8 @@ export default function ClipOcrWorkflow() {
     const [error, setError] = useState('')
     const [copied, setCopied] = useState(false)
     const [hasSearched, setHasSearched] = useState(false)
+    const requiredModels = ['clip', provider === 'local' ? 'glm_ocr' : null]
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels)
 
     // ── PDF 處理 ──
     const handlePdfSelect = useCallback((e) => {
@@ -112,6 +115,10 @@ export default function ClipOcrWorkflow() {
 
     // ── 送出 ──
     const handleSubmit = async () => {
+        if (modelsBlocked) {
+            setError('必要模型尚未就緒，請先透過 Manager 完成下載')
+            return
+        }
         if (!pdfFile) {
             setError('請先上傳 PDF 檔案')
             return
@@ -235,6 +242,8 @@ export default function ClipOcrWorkflow() {
                 <h2>🛠️ 以圖擷取 (Clip + OCR)</h2>
                 <p>上傳 PDF 與參考圖，找出最相似的單頁並自動擷取欄位資料</p>
             </div>
+
+            <ModelRequirement modelKeys={requiredModels} title="PDF 擷取所需模型尚未就緒" />
 
             {!processing && !workflowResult && !hasSearched && (
                 <div className="clip-layout">
@@ -382,7 +391,13 @@ export default function ClipOcrWorkflow() {
                             )}
 
                             <div style={{ marginTop: '32px' }}>
-                                <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={handleSubmit} disabled={!pdfFile || refImages.length === 0}>
+                                <button
+                                    className="btn btn-primary btn-lg"
+                                    style={{ width: '100%' }}
+                                    onClick={handleSubmit}
+                                    disabled={!pdfFile || refImages.length === 0 || modelsBlocked}
+                                    title={modelsBlocked ? '必要模型尚未下載' : undefined}
+                                >
                                     🚀 執行以圖擷取
                                 </button>
                             </div>

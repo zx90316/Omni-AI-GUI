@@ -153,30 +153,14 @@ def download_model(model_id: str, max_workers: int = 4) -> Path:
     return Path(snapshot_path)
 
 
-def download_paddlex_model(model_name: str) -> None:
-    """Use PaddleX's public API so files land in the cache used by GLM-OCR."""
-    _load_project_env()
-    from paddlex import create_model
-
-    emit_event("start", model_id=model_name, source="paddlex", total_bytes=None)
-    emit_event("phase", model_id=model_name, phase="download", message="PaddleX 正在取得官方推論模型")
-    model = create_model(model_name=model_name, device="cpu")
-    del model
-    emit_event("phase", model_id=model_name, phase="verify", message="檢查 PaddleX 推論檔案")
-    emit_event("complete", model_id=model_name)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="下載 Omni AI 使用的本機模型")
     parser.add_argument("model_id")
     parser.add_argument("--max-workers", type=int, default=4)
-    parser.add_argument("--source", choices=("huggingface", "paddlex"), default="huggingface")
+    parser.add_argument("--source", choices=("huggingface",), default="huggingface")
     args = parser.parse_args(argv)
     try:
-        if args.source == "paddlex":
-            download_paddlex_model(args.model_id)
-        else:
-            download_model(args.model_id, args.max_workers)
+        download_model(args.model_id, args.max_workers)
         return 0
     except Exception as exc:
         emit_event("error", model_id=args.model_id, message=str(exc))

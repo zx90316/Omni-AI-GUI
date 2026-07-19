@@ -5,7 +5,7 @@
 提供：
 - HuggingFace Hub 可達性檢測（含代理偵測）
 - 離線模式環境變數設定
-- Hugging Face / PaddleX 模型本地快取狀態查詢
+- Hugging Face 模型本地快取狀態查詢
 """
 import logging
 import os
@@ -13,7 +13,7 @@ import socket
 import urllib.request
 from typing import Dict
 
-from backend.model_cache import get_hf_cache_dir, inspect_model_cache, inspect_paddlex_model
+from backend.model_cache import get_hf_cache_dir, inspect_model_cache
 from backend.model_registry import MODEL_SPECS
 
 logger = logging.getLogger(__name__)
@@ -155,11 +155,7 @@ def get_all_models_status() -> Dict[str, dict]:
     """
     result = {}
     for spec in MODEL_SPECS:
-        status = (
-            inspect_paddlex_model(spec.model_id)
-            if spec.source == "paddlex"
-            else inspect_model_cache(spec.model_id)
-        )
+        status = inspect_model_cache(spec.model_id)
         result[spec.key] = status.to_dict()
     return result
 

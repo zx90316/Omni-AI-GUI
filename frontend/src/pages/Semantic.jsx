@@ -1,13 +1,12 @@
 ﻿import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { useNetwork } from '../context/NetworkContext.jsx';
+import { fetchWithAuth } from '../utils/api.js';
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx';
 import './Semantic.css';
 
 export default function Semantic() {
-    const { token } = useAuth();
-    const { offline, isModelCached } = useNetwork();
-    const semanticMissing = offline && (!isModelCached('bge_reranker') || !isModelCached('bge_embedding'));
     const [activeTab, setActiveTab] = useState('embed'); // 'embed' or 'rerank'
+    const requiredModels = [activeTab === 'embed' ? 'bge_embedding' : 'bge_reranker'];
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels);
 
     // Embedding State
     const [embedInput, setEmbedInput] = useState('');
@@ -29,16 +28,19 @@ export default function Semantic() {
             setEmbedError('請輸入文本');
             return;
         }
+        if (modelsBlocked) {
+            setEmbedError('Embedding 模型尚未就緒，請先透過 Manager 下載');
+            return;
+        }
 
         const sentences = embedInput.split('\n').filter(s => s.trim() !== '');
         setEmbedLoading(true);
 
         try {
-            const res = await fetch(`http://localhost:8000/semantic/embed`, {
+            const res = await fetchWithAuth('/semantic/embed', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ sentences })
             });
@@ -65,6 +67,10 @@ export default function Semantic() {
             setRerankError('請輸入查詢字串 (Query)');
             return;
         }
+        if (modelsBlocked) {
+            setRerankError('Reranker 模型尚未就緒，請先透過 Manager 下載');
+            return;
+        }
 
         const validDocs = documents.filter(d => d.trim() !== '');
         if (validDocs.length === 0) {
@@ -76,11 +82,10 @@ export default function Semantic() {
         setRerankLoading(true);
 
         try {
-            const res = await fetch(`http://localhost:8000/semantic/rerank`, {
+            const res = await fetchWithAuth('/semantic/rerank', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ pairs, normalize: true })
             });
@@ -113,22 +118,23 @@ export default function Semantic() {
                 <p>提供基於 BGE 模型的文本向量化 (Embedding) 與 相關度重排序 (Reranking)。</p>
             </header>
 
-            {semanticMissing && (
-                <div className="model-warning">
-                    <span className="warning-icon">⚠️</span>
-                    <span>目前處於離線模式，BGE 語意模型尚未下載至本機。請先在有網路的環境中啟動系統以自動下載模型，之後即可離線使用。</span>
-                </div>
-            )}
+            <ModelRequirement modelKeys={requiredModels} title="語意模型尚未就緒" />
 
             <div style={{ marginTop: 'var(--space-md)' }}>
-                <div className="tab-buttons">
+                <div className="tab-buttons" role="tablist" aria-label="語意工具">
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'embed'}
                         className={`tab-btn ${activeTab === 'embed' ? 'active' : ''}`}
                         onClick={() => setActiveTab('embed')}
                     >
                         Embedding 向量化
                     </button>
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'rerank'}
                         className={`tab-btn ${activeTab === 'rerank' ? 'active' : ''}`}
                         onClick={() => setActiveTab('rerank')}
                     >
@@ -155,7 +161,7 @@ export default function Semantic() {
                         <button
                             className="btn btn-primary"
                             onClick={handleEmbed}
-                            disabled={embedLoading}
+                            disabled={embedLoading || modelsBlocked}
                         >
                             {embedLoading ? '運算中...' : '生成向量'}
                         </button>
@@ -226,7 +232,7 @@ export default function Semantic() {
                         <button
                             className="btn btn-primary"
                             onClick={handleRerank}
-                            disabled={rerankLoading}
+                            disabled={rerankLoading || modelsBlocked}
                         >
                             {rerankLoading ? '計算中...' : '計算相關度'}
                         </button>

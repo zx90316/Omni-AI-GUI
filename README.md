@@ -41,13 +41,15 @@ Manager 的「安裝/更新 → 模型管理」會列出所有本機 AI 模型�
 
 ### 🔑 環境變數與模型設定
 
+Manager 的「設定 → 設定 .env 參數」會依欄位型態提供下拉選單、預設值與輸入範例，並在儲存前驗證必要設定。`.env` 尚未建立、必要欄位空白或格式不正確時，Backend、Frontend、自動啟動與健康監督重啟都會被阻擋。
+
 - **Pyannote (語者分離)**：於 Manager 介面設定或新增 `.env` 檔案，填入 [HuggingFace Token](https://huggingface.co/settings/tokens)：
   ```env
   HF_TOKEN=hf_your_token_here
   ```
 - **ASR**：預設使用 60 秒低能量邊界切段、官方 HF-native 轉錄與 `Qwen3-ForcedAligner-0.6B-hf`。長音訊以串流方式偵測靜音，任務支援安全取消與逾時保護；精確對齊失敗時會保留轉錄並明確標示近似時間戳。可用 `ASR_MAX_NEW_TOKENS`、`ASR_MAX_UPLOAD_MB`、`ASR_TASK_TIMEOUT_SECONDS` 調整限制；相容環境可另行安裝 FlashAttention 並設 `ASR_ATTN_IMPLEMENTATION=flash_attention_2`。
-- **OCR**：預設 `OCR_PROVIDER=local`，首次使用會從 Hugging Face 下載 `zai-org/GLM-OCR`；完整文件的版面模式另會下載 PP-DocLayoutV3。正式或多人使用環境可把 `OCR_PROVIDER` 設為 `openai` 並以 `OCR_API_URL` 連接 vLLM/SGLang。Ollama 僅保留為相容選項。
-- **本地模型存放**：大部分模型使用 Hugging Face Hub 快取（可用 `HF_HUB_CACHE` 或 `HF_HOME` 改變位置）；PP-DocLayoutV3 使用 GLM-OCR 實際讀取的 PaddleX 快取（可用 `PADDLE_PDX_CACHE_HOME` 改變位置）。Manager 會區分「已存在、缺少、不完整」三種狀態。
+- **OCR**：預設 `OCR_PROVIDER=local`，需先在 Manager 下載 `zai-org/GLM-OCR`；完整文件的版面模式另需 PP-DocLayoutV3。模型未就緒時前端會顯示狀態並停用功能，不會在首次使用時下載。正式或多人使用環境可把 `OCR_PROVIDER` 設為 `openai` 並以 `OCR_API_URL` 連接 vLLM/SGLang。Ollama 僅保留為相容選項。
+- **本地模型存放**：所有模型都使用 Hugging Face Hub 快取（可用 `HF_HUB_CACHE` 或 `HF_HOME` 改變位置）。GLM-OCR 0.1.5 的版面偵測使用 Transformers 版 `PaddlePaddle/PP-DocLayoutV3_safetensors`，不需要 PaddleX。Manager 會區分「已存在、缺少、不完整」三種狀態。
 
 ### 🌐 使用 Web 介面
 於 Manager 面板依序點擊「啟動 Backend」與「啟動 Frontend」，接著按「🌐 開啟前端頁面」即可在瀏覽器使用完整服務介面。

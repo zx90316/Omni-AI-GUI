@@ -37,9 +37,7 @@ yt-dlp
 # 環境變數
 python-dotenv
 
-# LLM Providers
-openai
-google-genai
+# Authentication
 PyJWT
 pydantic[email]
 

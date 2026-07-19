@@ -64,8 +64,9 @@ class OCRTests(unittest.TestCase):
 
         class FakeAutoProcessor:
             @classmethod
-            def from_pretrained(cls, model):
+            def from_pretrained(cls, model, **kwargs):
                 observed["processor_model"] = model
+                observed["processor_load_kwargs"] = kwargs
                 return FakeProcessor()
 
         class FakeModel:
@@ -90,7 +91,7 @@ class OCRTests(unittest.TestCase):
         fake_transformers.AutoModelForImageTextToText = FakeAutoModel
         with (
             patch.dict(sys.modules, {"transformers": fake_transformers}),
-            patch("backend.network_utils.is_offline_mode", return_value=False),
+            patch("backend.network_utils.is_model_cached", return_value=True),
         ):
             provider = TransformersOCRProvider()
             output = provider.recognize(
@@ -102,6 +103,8 @@ class OCRTests(unittest.TestCase):
         self.assertEqual(output, "recognized locally")
         self.assertEqual(observed["model"], "zai-org/GLM-OCR")
         self.assertEqual(observed["processor_model"], "zai-org/GLM-OCR")
+        self.assertTrue(observed["processor_load_kwargs"]["local_files_only"])
+        self.assertTrue(observed["load_kwargs"]["local_files_only"])
         self.assertEqual(observed["messages"][0]["content"][1]["text"], "Text Recognition:")
         self.assertTrue(observed["messages"][0]["content"][0]["url"].startswith("data:image/png;base64,"))
         self.assertEqual(observed["generation"]["max_new_tokens"], 64)

@@ -101,11 +101,10 @@ class TransformersOCRProvider(OCRProvider):
                 self.unload()
             from backend.network_utils import (
                 is_model_cached,
-                is_offline_mode,
                 make_offline_error_message,
             )
 
-            if is_offline_mode() and not is_model_cached(model_name):
+            if not is_model_cached(model_name):
                 raise OCRProviderError(make_offline_error_message(model_name))
             try:
                 from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -119,9 +118,12 @@ class TransformersOCRProvider(OCRProvider):
             if device == "auto":
                 kwargs["device_map"] = "auto"
             try:
-                self._processor = AutoProcessor.from_pretrained(model_name)
+                self._processor = AutoProcessor.from_pretrained(
+                    model_name, local_files_only=True
+                )
                 self._model = AutoModelForImageTextToText.from_pretrained(
                     model_name,
+                    local_files_only=True,
                     **kwargs,
                 )
                 if device not in {"", "auto"}:

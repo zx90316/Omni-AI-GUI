@@ -155,11 +155,11 @@ OCR_MAX_WORKERS=8
 OLLAMA_HOST=http://127.0.0.1:11434
 ```
 
-第一次本機辨識會下載 GLM-OCR 權重；第一次啟用版面分析會下載 PP-DocLayoutV3。模型放在 Hugging Face 標準 cache，不進 Git。
+本機辨識前需先由 Manager 下載 GLM-OCR 權重；啟用版面分析前另需下載 PP-DocLayoutV3。模型放在 Hugging Face 標準 cache，不進 Git，功能請求本身不會觸發下載。
 
 ## 效能與風險
 
-1. **本機第一次執行較慢**：需下載模型並建立 GPU graph/cache；後續請求沿用 singleton。
+1. **本機第一次執行較慢**：Manager 完成模型下載後，首次推論仍需建立 GPU graph/cache；後續請求沿用 singleton。
 2. **完整 layout 比單頁直接辨識昂貴**：流程會先偵測區塊，再對文字、表格、公式區塊個別辨識；結果較完整但延遲較高。
 3. **CPU 可執行但不適合大量文件**：0.9B BF16 模型雖小，CPU 延遲仍可能明顯。正式服務建議 vLLM/SGLang。
 4. **單 GPU 與其他模型競爭**：專案同時有 ASR、CLIP、Semantic。OCR UI 提供釋放模型；CLIP 工作流也會先卸載 CLIP 再進 OCR。若仍發生 OOM，可把 `GLMOCR_LAYOUT_DEVICE=cpu` 或改用獨立推論服務。

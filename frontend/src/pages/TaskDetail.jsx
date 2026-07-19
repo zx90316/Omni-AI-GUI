@@ -1,5 +1,5 @@
 import { fetchWithAuth } from '../utils/api';
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 
 const STATUS_MAP = {
@@ -93,41 +93,10 @@ export default function TaskDetail() {
         }
     }
 
-    // ── LLM 潤飾/翻譯狀態 ──
+    // ── 字幕手動編輯狀態 ──
     const [sentences, setSentences] = useState([])
-    const [llmProviders, setLlmProviders] = useState({})
-    const [llmProvider, setLlmProvider] = useState('')
-    const [llmModel, setLlmModel] = useState('')
-    const [llmAction, setLlmAction] = useState('polish') // polish | translate
-    const [llmProgress, setLlmProgress] = useState(-1) // -1 尚未開始, 0-100 進度
-    const [llmError, setLlmError] = useState('')
-    const [llmCustomPrompt, setLlmCustomPrompt] = useState('')
-    const [showCustomPrompt, setShowCustomPrompt] = useState(false)
     const [editingIndex, setEditingIndex] = useState(-1)
     const [editValue, setEditValue] = useState('')
-
-    const [temperature, setTemperature] = useState(0.3)
-    const [maxTokens, setMaxTokens] = useState(1024)
-    const [thinkingLevel, setThinkingLevel] = useState('medium')
-
-    const fetchLlmProviders = useCallback(async () => {
-        try {
-            const r = await fetchWithAuth('/api/llm/providers')
-            if (r.ok) {
-                const data = await r.json()
-                setLlmProviders(data)
-                const providers = Object.keys(data)
-                if (providers.length > 0) {
-                    setLlmProvider(providers[0])
-                    setLlmModel(data[providers[0]][0] || '')
-                }
-            }
-        } catch { }
-    }, [])
-
-    useEffect(() => {
-        fetchLlmProviders()
-    }, [fetchLlmProviders])
 
     // 初始化 sentences
     useEffect(() => {
@@ -136,104 +105,14 @@ export default function TaskDetail() {
         }
     }, [task, sentences.length])
 
-    // ── LLM 執行邏輯 ──
-    const handleLlmProcess = async () => {
-        if (!id || !llmProvider || !llmModel) return
-        setLlmProgress(0)
-        setLlmError('')
-        setEditingIndex(-1)
-
-        try {
-            const resp = await fetchWithAuth('/api/llm/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    task_id: id,
-                    task_type: 'asr',
-                    provider: llmProvider,
-                    model: llmModel,
-                    action: llmAction,
-                    custom_prompt: showCustomPrompt ? llmCustomPrompt : "",
-                    temperature: parseFloat(temperature),
-                    max_tokens: parseInt(maxTokens, 10),
-                    thinking_level: thinkingLevel
-                })
-            })
-
-            if (!resp.ok) throw new Error('啟動 LLM 處理失敗')
-
-            const reader = resp.body.getReader()
-            const decoder = new TextDecoder()
-
-            let buffer = ""
-            while (true) {
-                const { value, done } = await reader.read()
-                if (done) break
-                buffer += decoder.decode(value, { stream: true })
-
-                const parts = buffer.split('\n\n')
-                buffer = parts.pop() || ""
-
-                for (const part of parts) {
-                    if (part.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(part.substring(6))
-                            setLlmProgress(data.percent)
-
-                            if (data.done) {
-                                if (data.sentences) {
-                                    setSentences(data.sentences)
-                                }
-                                if (data.cancelled) {
-                                    setLlmError('已中斷處理')
-                                }
-                                setTimeout(() => setLlmProgress(-1), 1000)
-                            } else {
-                                setSentences(prev => {
-                                    const next = [...prev]
-                                    const curr = next[data.index]
-                                    next[data.index] = {
-                                        ...curr,
-                                        original_text: curr.original_text !== undefined ? curr.original_text : curr.text,
-                                        text: data.processed_text
-                                    }
-                                    return next
-                                })
-                            }
-                        } catch (e) { console.error('SSE JSON parse error', e) }
-                    }
-                }
-            }
-        } catch (e) {
-            setLlmError(e.message)
-            setLlmProgress(-1)
-        }
-    }
-
-    // ── 中斷 LLM 處理 ──
-    const handleLlmCancel = async () => {
-        if (!id) return
-        try {
-            await fetchWithAuth('/api/llm/cancel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ task_id: id, task_type: 'asr' })
-            })
-        } catch (e) { console.error('中斷失敗', e) }
-    }
-
     // ── 保存最終字幕 ──
     const handleSaveSentences = async () => {
         if (!id) return
         try {
-            const resp = await fetchWithAuth('/api/llm/save', {
-                method: 'POST',
+            const resp = await fetchWithAuth(`/api/tasks/${id}/sentences`, {
+                method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    task_id: id,
-                    task_type: 'asr',
-                    sentences: sentences
-                })
+                body: JSON.stringify({ sentences })
             })
             if (resp.ok) {
                 alert('字幕儲存成功！')
@@ -320,10 +199,10 @@ export default function TaskDetail() {
         setSentences(reverted)
         // 同步儲存到後端
         try {
-            await fetchWithAuth('/api/llm/save', {
-                method: 'POST',
+            await fetchWithAuth(`/api/tasks/${id}/sentences`, {
+                method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ task_id: id, task_type: 'asr', sentences: reverted })
+                body: JSON.stringify({ sentences: reverted })
             })
         } catch (e) {
             console.error('儲存復原失敗', e)
@@ -597,125 +476,30 @@ export default function TaskDetail() {
                                 <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>共 {sentences.length} 句</span>
                             </div>
 
-                            {/* ── LLM 工具列 ── */}
-                            <div className="subsync-llm-toolbar" style={{ margin: '0 0 1rem 0', background: 'var(--color-surface)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }}>供應商</label>
-                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                                            value={llmProvider} onChange={e => {
-                                                setLlmProvider(e.target.value)
-                                                setLlmModel(llmProviders[e.target.value]?.[0] || '')
-                                            }}>
-                                            {Object.keys(llmProviders).map(p => <option key={p} value={p}>{p}</option>)}
-                                        </select>
-                                    </div>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }}>模型</label>
-                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                                            value={llmModel} onChange={e => setLlmModel(e.target.value)}>
-                                            {(llmProviders[llmProvider] || []).map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
-                                    </div>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }}>動作</label>
-                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                            <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem', width: 'auto' }}
-                                                value={llmAction} onChange={e => setLlmAction(e.target.value)}>
-                                                <option value="polish">✨ 語意潤飾</option>
-                                                <option value="translate">🌐 翻譯繁中</option>
-                                            </select>
-                                            <button
-                                                className={`btn btn-sm ${showCustomPrompt ? 'btn-accent' : 'btn-outline'}`}
-                                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                                                onClick={() => setShowCustomPrompt(!showCustomPrompt)}
-                                                title="自訂提示詞"
-                                            >
-                                                ✍️ 自訂
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }} title="數值越高越有創意 (0.0~2.0)">溫度</label>
-                                        <input type="number" step="0.1" min="0" max="2" className="form-input" style={{ width: '60px', padding: '4px 8px', fontSize: '0.8rem' }}
-                                            value={temperature} onChange={e => setTemperature(e.target.value)} />
-                                    </div>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }} title="長度限制或思考長度">最大輸出</label>
-                                        <input type="number" step="100" min="10" className="form-input" style={{ width: '70px', padding: '4px 8px', fontSize: '0.8rem' }}
-                                            value={maxTokens} onChange={e => setMaxTokens(e.target.value)} />
-                                    </div>
-                                    <div className="subsync-llm-group">
-                                        <label className="form-label" style={{ marginBottom: 2 }} title="支援思考等級之模型 (如 o1) 或傳給 Ollama 做參考">思考等級</label>
-                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                                            value={thinkingLevel} onChange={e => setThinkingLevel(e.target.value)}>
-                                            <option value="low">低</option>
-                                            <option value="medium">中</option>
-                                            <option value="high">高</option>
-                                        </select>
-                                    </div>
-                                    <div className="subsync-llm-actions" style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-                                        <button className="btn btn-accent btn-sm"
-                                            disabled={llmProgress >= 0 || !llmModel}
-                                            onClick={handleLlmProcess}>
-                                            執行
-                                        </button>
-                                        {llmProgress >= 0 && (
-                                            <button className="btn btn-danger btn-sm"
-                                                onClick={handleLlmCancel}>
-                                                ⏹ 中斷
-                                            </button>
-                                        )}
-                                        {sentences.some(s => s.original_text !== undefined) && (
-                                            <button className="btn btn-outline btn-sm"
-                                                onClick={handleRevertAll}
-                                                title="復原所有修改到原始字幕">
-                                                ↩ 全部復原
-                                            </button>
-                                        )}
-                                        <button className="btn btn-primary btn-sm"
-                                            onClick={handleSaveSentences}
-                                            disabled={llmProgress >= 0}>
-                                            💾 儲存
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* 自訂提示詞輸入區 */}
-                                {showCustomPrompt && (
-                                    <div style={{ width: '100%', marginTop: '12px' }}>
-                                        <textarea
-                                            className="form-input"
-                                            placeholder={llmAction === 'polish' ?
-                                                "請輸入自訂潤飾提示詞，例如：請幫我將這段字幕改成幽默的語氣，保留原意。" :
-                                                "請輸入自訂翻譯提示詞，例如：將以下字幕翻譯成繁體中文，請使用台灣本土流行語。"
-                                            }
-                                            style={{ width: '100%', minHeight: '60px', fontSize: '0.85rem', resize: 'vertical' }}
-                                            value={llmCustomPrompt}
-                                            onChange={e => setLlmCustomPrompt(e.target.value)}
-                                        />
-                                    </div>
+                            <div className="subtitle-editor-toolbar">
+                                <strong>字幕編輯</strong>
+                                <span className="text-muted">雙擊字幕可手動修正</span>
+                                <span className="toolbar-spacer" />
+                                {sentences.some(s => s.original_text !== undefined) && (
+                                    <button type="button" className="btn btn-outline btn-sm" onClick={handleRevertAll}>
+                                        ↩ 全部復原
+                                    </button>
                                 )}
-
-                                {llmProgress >= 0 && (
-                                    <div className="subsync-llm-progress-bar" style={{ marginTop: '12px', height: '4px', background: 'var(--color-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                                        <div className="subsync-llm-progress-fill" style={{ width: `${llmProgress}%`, height: '100%', background: 'var(--color-accent)', transition: 'width 0.3s' }}></div>
-                                    </div>
-                                )}
-                                {llmError && <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginTop: '8px' }}>{llmError}</div>}
+                                <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveSentences}>
+                                    儲存字幕
+                                </button>
                             </div>
-
                             {/* ── 去除標點工具列 ── */}
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '0 0 12px 0', padding: '8px 12px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>標點符號</span>
                                 <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem' }}
                                     onClick={() => handleRemovePunctuation('all')}
-                                    disabled={llmProgress >= 0}>
+                                >
                                     去除全部標點
                                 </button>
                                 <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem' }}
                                     onClick={() => handleRemovePunctuation('sentence_end')}
-                                    disabled={llmProgress >= 0}>
+                                >
                                     去除句末標點
                                 </button>
                                 <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
@@ -725,7 +509,7 @@ export default function TaskDetail() {
                                 {sentences.some(s => s.original_text !== undefined) && (
                                     <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
                                         onClick={handleRevertPunctuation}
-                                        disabled={llmProgress >= 0}>
+                                    >
                                         ↩ 復原標點
                                     </button>
                                 )}

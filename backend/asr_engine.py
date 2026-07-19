@@ -184,12 +184,11 @@ class ASREngine:
             AutoProcessor,
         )
         from backend.config import FORCED_ALIGNER
-        from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+        from backend.network_utils import is_model_cached, make_offline_error_message
 
-        if is_offline_mode():
-            for mid in [self.model_name, FORCED_ALIGNER]:
-                if not is_model_cached(mid):
-                    raise RuntimeError(make_offline_error_message(mid))
+        for mid in [self.model_name, FORCED_ALIGNER]:
+            if not is_model_cached(mid):
+                raise RuntimeError(make_offline_error_message(mid))
 
         self._progress(5, f"載入模型 {self.model_name}...")
         try:
@@ -201,13 +200,17 @@ class ASREngine:
             if attention:
                 model_kwargs["attn_implementation"] = attention
 
-            self._processor = AutoProcessor.from_pretrained(self.model_name)
+            self._processor = AutoProcessor.from_pretrained(
+                self.model_name, local_files_only=True
+            )
             self._model = AutoModelForMultimodalLM.from_pretrained(
-                self.model_name, **model_kwargs
+                self.model_name, local_files_only=True, **model_kwargs
             ).eval()
-            self._aligner_processor = AutoProcessor.from_pretrained(FORCED_ALIGNER)
+            self._aligner_processor = AutoProcessor.from_pretrained(
+                FORCED_ALIGNER, local_files_only=True
+            )
             self._aligner_model = AutoModelForTokenClassification.from_pretrained(
-                FORCED_ALIGNER, **model_kwargs
+                FORCED_ALIGNER, local_files_only=True, **model_kwargs
             ).eval()
         except Exception as e:
             self.unload_model()
@@ -623,9 +626,9 @@ class ASREngine:
         from pyannote.audio import Pipeline
         from backend.audio_utils import load_audio
         from backend.config import DIARIZATION_MODEL, HF_TOKEN
-        from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+        from backend.network_utils import is_model_cached, make_offline_error_message
 
-        if is_offline_mode() and not is_model_cached(DIARIZATION_MODEL):
+        if not is_model_cached(DIARIZATION_MODEL):
             raise RuntimeError(make_offline_error_message(DIARIZATION_MODEL))
 
         pipeline = None

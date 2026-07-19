@@ -1,10 +1,10 @@
 ﻿import { useState, useRef, useCallback } from 'react'
 import { fetchWithAuth } from '../utils/api.js'
-import { useNetwork } from '../context/NetworkContext.jsx'
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 
 export default function ClipSearch() {
-    const { offline, isModelCached } = useNetwork()
-    const clipMissing = offline && !isModelCached('clip')
+    const requiredModels = ['clip']
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels)
     // 檔案
     const [pdfFile, setPdfFile] = useState(null)
     const [pdfDragOver, setPdfDragOver] = useState(false)
@@ -84,6 +84,10 @@ export default function ClipSearch() {
 
     // ── 送出 ──
     const handleSubmit = async () => {
+        if (modelsBlocked) {
+            setError('CLIP 模型尚未就緒，請先透過 Manager 下載')
+            return
+        }
         if (!pdfFile) {
             setError('請先上傳 PDF 檔案')
             return
@@ -173,12 +177,7 @@ export default function ClipSearch() {
                 <p>在 PDF 中以圖片搜尋最相似頁面（基於 CLIP 模型）</p>
             </div>
 
-            {clipMissing && (
-                <div className="model-warning">
-                    <span className="warning-icon">⚠️</span>
-                    <span>目前處於離線模式，CLIP 模型尚未下載至本機。請先在有網路的環境中啟動系統並執行一次搜尋以下載模型，之後即可離線使用。</span>
-                </div>
-            )}
+            <ModelRequirement modelKeys={requiredModels} title="CLIP 模型尚未就緒" />
 
             {!processing && results.length === 0 && !hasSearched && (
                 <div className="clip-layout">
@@ -317,7 +316,8 @@ export default function ClipSearch() {
                                     className="btn btn-primary btn-lg"
                                     style={{ width: '100%' }}
                                     onClick={handleSubmit}
-                                    disabled={!pdfFile || refImages.length === 0}
+                                    disabled={!pdfFile || refImages.length === 0 || modelsBlocked}
+                                    title={modelsBlocked ? 'CLIP 模型尚未下載' : undefined}
                                 >
                                     🚀 開始搜尋
                                 </button>

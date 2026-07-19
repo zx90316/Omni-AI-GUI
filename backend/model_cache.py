@@ -108,21 +108,21 @@ def _snapshot_is_usable(snapshot: Path) -> bool:
 def _snapshot_has_complete_weights(snapshot: Path) -> bool:
     """Verify weight files referenced by an index, or one standalone weight file."""
     try:
-        indexes = list(snapshot.glob("*.index.json"))
+        indexes = list(snapshot.rglob("*.index.json"))
         if indexes:
             for index_path in indexes:
                 try:
                     payload = json.loads(index_path.read_text(encoding="utf-8"))
                     filenames = set(payload.get("weight_map", {}).values())
                 except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
-                    continue
-                if filenames and all(
-                    (snapshot / filename).is_file()
-                    and (snapshot / filename).stat().st_size > 0
+                    return False
+                if not filenames or not all(
+                    (index_path.parent / filename).is_file()
+                    and (index_path.parent / filename).stat().st_size > 0
                     for filename in filenames
                 ):
-                    return True
-            return False
+                    return False
+            return True
 
         return any(
             item.is_file()
@@ -177,12 +177,16 @@ def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCa
         detail = "快取不完整：找不到可用 snapshot" if snapshots else "下載尚未完成"
         return ModelCacheStatus(model_id, "partial", False, detail, size_bytes=size_bytes)
 
-    if incomplete and not _snapshot_has_complete_weights(selected):
+    if not _snapshot_has_complete_weights(selected):
         return ModelCacheStatus(
             model_id,
             "partial",
             False,
-            f"偵測到 {len(incomplete)} 個未完成下載檔",
+            (
+                f"偵測到 {len(incomplete)} 個未完成下載檔，且有效 snapshot 缺少完整權重"
+                if incomplete
+                else "有效 snapshot 缺少模型權重"
+            ),
             revision,
             str(selected),
             size_bytes,
@@ -211,70 +215,4 @@ def inspect_model_cache(model_id: str, cache_dir: Path | None = None) -> ModelCa
         revision,
         str(selected),
         size_bytes,
-    )
-
-
-def get_paddlex_cache_dir(
-    environ: Mapping[str, str] | None = None,
-    home: Path | None = None,
-) -> Path:
-    """Resolve PaddleX's official model cache directory."""
-    env = os.environ if environ is None else environ
-    cache_home = env.get("PADDLE_PDX_CACHE_HOME")
-    if cache_home:
-        return Path(cache_home).expanduser() / "official_models"
-    resolved_home = Path.home() if home is None else home
-    return resolved_home / ".paddlex" / "official_models"
-
-
-def inspect_paddlex_model(
-    model_name: str,
-    cache_dir: Path | None = None,
-) -> ModelCacheStatus:
-    """Inspect an official PaddleX model without importing Paddle/PaddleX."""
-    root = cache_dir or get_paddlex_cache_dir()
-    model_dir = root / model_name
-    if not model_dir.is_dir():
-        return ModelCacheStatus(model_name, "missing", False, "尚未下載")
-
-    files = []
-    partial_files = []
-    try:
-        for item in model_dir.rglob("*"):
-            if not item.is_file():
-                continue
-            files.append(item)
-            lowered = item.name.lower()
-            if lowered.endswith((".tmp", ".incomplete")) or "___tmp" in lowered:
-                partial_files.append(item)
-    except OSError:
-        return ModelCacheStatus(model_name, "partial", False, "無法讀取 PaddleX 模型目錄")
-
-    size_bytes = _directory_size(model_dir)
-    names = {item.name.lower() for item in files}
-    has_config = bool({"inference.yml", "inference.yaml", "config.json"} & names)
-    has_weights = any(
-        name.endswith((".pdiparams", ".safetensors", ".onnx")) for name in names
-    )
-    if partial_files or not (has_config and has_weights):
-        reason = (
-            f"偵測到 {len(partial_files)} 個未完成下載檔"
-            if partial_files
-            else "缺少 PaddleX 推論設定或權重"
-        )
-        return ModelCacheStatus(
-            model_name,
-            "partial",
-            False,
-            reason,
-            snapshot_path=str(model_dir),
-            size_bytes=size_bytes,
-        )
-    return ModelCacheStatus(
-        model_name,
-        "ready",
-        True,
-        "已下載且 PaddleX 推論檔案可讀",
-        snapshot_path=str(model_dir),
-        size_bytes=size_bytes,
     )

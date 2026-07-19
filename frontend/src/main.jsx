@@ -4,14 +4,14 @@ import App from './App.jsx'
 import './index.css'
 
 import { AuthProvider } from './context/AuthContext.jsx'
-import { NetworkProvider } from './context/NetworkContext.jsx'
+import { ModelProvider } from './context/ModelContext.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <AuthProvider>
-            <NetworkProvider>
+            <ModelProvider>
                 <App />
-            </NetworkProvider>
+            </ModelProvider>
         </AuthProvider>
     </React.StrictMode>,
 )

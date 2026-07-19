@@ -1,7 +1,10 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { fetchWithAuth } from '../utils/api.js'
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 
 export default function VectorExtractor() {
+    const requiredModels = ['clip']
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels)
     const [imageFile, setImageFile] = useState(null)
     const [imagePreview, setImagePreview] = useState(null)
     const [result, setResult] = useState(null)
@@ -11,6 +14,10 @@ export default function VectorExtractor() {
     // For drag and drop UI
     const [isDragging, setIsDragging] = useState(false)
     const fileInputRef = useRef(null)
+
+    useEffect(() => () => {
+        if (imagePreview) URL.revokeObjectURL(imagePreview)
+    }, [imagePreview])
 
     const handleFileChange = (e) => {
         const file = e.target.files[0]
@@ -46,6 +53,10 @@ export default function VectorExtractor() {
     }
 
     const handleExtract = async () => {
+        if (modelsBlocked) {
+            setError('CLIP 模型尚未就緒，請先透過 Manager 下載')
+            return
+        }
         if (!imageFile) {
             setError('請先上傳圖片')
             return
@@ -96,6 +107,8 @@ export default function VectorExtractor() {
                 <h2> CLIP 特徵擷取</h2>
                 <p>上傳單張圖片，獲取 512 維度之特徵向量（已執行 L2 正規化）</p>
             </header>
+
+            <ModelRequirement modelKeys={requiredModels} title="CLIP 模型尚未就緒" />
 
             <main className="page-content">
                 {error && <div className="alert alert-error mb-4">{error}</div>}
@@ -157,7 +170,8 @@ export default function VectorExtractor() {
                     <button
                         className="btn btn-primary"
                         onClick={handleExtract}
-                        disabled={loading || !imageFile}
+                        disabled={loading || !imageFile || modelsBlocked}
+                        title={modelsBlocked ? 'CLIP 模型尚未下載' : undefined}
                         style={{ minWidth: '200px', padding: '0.75rem 1.5rem', fontSize: '1.1rem' }}
                     >
                         {loading ? '擷取中...' : '開始提取向量 (Extract)'}

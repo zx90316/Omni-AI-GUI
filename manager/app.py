@@ -55,13 +55,14 @@ from manager.git_manager import git_pull, check_for_updates, get_current_version
 from manager.network_utils import check_internet
 from manager.ffmpeg_utils import is_ffmpeg_installed, download_ffmpeg
 from manager.env_editor import open_env_editor
+from manager.env_schema import validate_env_file
 from manager.model_manager import (
     MODEL_SPECS,
     cancel_model_download,
     download_models,
     get_models_status,
 )
-from backend.model_cache import get_hf_cache_dir, get_paddlex_cache_dir
+from backend.model_cache import get_hf_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,7 @@ class ManagerApp:
         )
         self.btn_download_ffmpeg.pack(side=LEFT)
 
-        # Hugging Face / PaddleX 模型
+        # Hugging Face 模型
         model_frame = ttk.LabelFrame(inner, text="  🤖 模型管理  ")
         model_frame.pack(fill=BOTH, expand=True, pady=(0, 10), ipadx=10, ipady=8)
 
@@ -525,6 +526,9 @@ class ManagerApp:
             env_frame, text="⚙️ 設定 .env 參數", bootstyle="info",
             command=self._open_env_editor, width=20
         ).pack(anchor=W)
+        self.env_status_label = ttk.Label(env_frame, text="正在檢查 .env…")
+        self.env_status_label.pack(anchor=W, pady=(8, 0))
+        self._refresh_env_status()
 
         # 自動行為
         auto_frame = ttk.LabelFrame(inner, text="  🤖 自動化  ")
@@ -788,7 +792,36 @@ class ManagerApp:
 
     def _open_env_editor(self):
         self._append_console("system", "📝 開啟 .env 編輯器")
-        open_env_editor(self.root, on_saved=lambda: self._append_console("system", "✅ .env 檔案已儲存"))
+        open_env_editor(self.root, on_saved=self._on_env_saved)
+
+    def _on_env_saved(self):
+        self._append_console("system", "✅ .env 已完成驗證並儲存")
+        self._refresh_env_status()
+
+    def _refresh_env_status(self):
+        result = validate_env_file()
+        if not hasattr(self, "env_status_label"):
+            return result.valid
+        self.env_status_label.configure(
+            text=(
+                "✓ .env 設定完整，可啟動服務"
+                if result.valid
+                else f"⚠ {result.summary}；完成設定前無法啟動服務"
+            ),
+            bootstyle="success" if result.valid else "danger",
+        )
+        state = "normal" if result.valid else "disabled"
+        for name in (
+            "btn_start_backend",
+            "btn_restart_backend",
+            "btn_start_frontend",
+            "btn_restart_frontend",
+            "btn_start_all",
+        ):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state=state)
+        return result.valid
 
     def _download_ffmpeg(self):
         self._append_console("system", "━" * 50)
@@ -896,7 +929,7 @@ class ManagerApp:
                 values=(
                     spec.feature,
                     spec.label,
-                    f"{'PaddleX' if spec.source == 'paddlex' else 'HF'}: {spec.model_id}",
+                    f"HF: {spec.model_id}",
                     status_text,
                     self._format_bytes(status.size_bytes),
                 ),
@@ -906,7 +939,7 @@ class ManagerApp:
         self.model_summary_label.configure(
             text=(
                 f"模型快取: {ready_count}/{len(MODEL_SPECS)} 可用  ·  "
-                f"HF: {get_hf_cache_dir()}  ·  PaddleX: {get_paddlex_cache_dir()}"
+                f"HF: {get_hf_cache_dir()}"
             ),
             bootstyle="success" if ready_count == len(MODEL_SPECS) else "warning",
         )
@@ -1059,7 +1092,6 @@ class ManagerApp:
             f"  FFmpeg:         {'✅ 已安裝' if is_ffmpeg_installed() else '❌ 未安裝'}",
             f"  模型快取:       {ready_models}/{len(MODEL_SPECS)} 可用",
             f"  快取位置:       {get_hf_cache_dir()}",
-            f"  PaddleX 快取:   {get_paddlex_cache_dir()}",
             "",
             "═" * 50,
         ])

@@ -40,6 +40,7 @@ from backend.asr_control import (
     request_cancel,
 )
 from backend.asr_engine import ASRCancelledError, ASREngine, ASRTimeoutError
+from backend.model_availability import require_asr_models
 from backend.upload_utils import save_upload_limited, validated_upload_name
 
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
@@ -178,6 +179,8 @@ def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db), c
         raise HTTPException(status_code=400, detail=f"不支援的語言: {req.language}")
 
     # 建立任務
+    require_asr_models(MODELS[req.model])
+
     task = Task(
         owner_id=current_user["owner_id"],
         task_type="youtube",
@@ -230,6 +233,8 @@ async def analyze_youtube_upload(
         raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
 
     # Generate a local video id
+    require_asr_models(MODELS[model])
+
     video_id = f"local_{uuid.uuid4().hex[:11]}"
     original_name, ext = validated_upload_name(file)
     

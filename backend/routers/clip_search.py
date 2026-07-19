@@ -13,6 +13,7 @@ from pydantic import BaseModel
 import base64
 
 from backend.clip_engine import search_similar_pages, extract_image_feature
+from backend.model_availability import require_models
 
 router = APIRouter(prefix="/api/clip-search", tags=["clip-search"])
 
@@ -42,6 +43,7 @@ async def extract_feature_api(
     從 Base64 圖像提取 CLIP 特徵向量
     向量已正規化，可直接用於餘弦相似度計算（點積）
     """
+    require_models(["clip"])
     try:
         # 移除 data URI 前綴 (如 "data:image/jpeg;base64,")
         image_base64 = request.image_base64
@@ -72,6 +74,7 @@ async def extract_feature_file_api(
     """
     從上傳圖片檔案提取 CLIP 特徵向量
     """
+    require_models(["clip"])
     try:
         img_ext = pathlib.Path(image_file.filename or "").suffix.lower()
         if img_ext not in ALLOWED_IMG_EXT:
@@ -120,6 +123,8 @@ async def clip_search_analyze(
     - top_k: 取前幾頁
     """
     # 驗證 PDF
+    require_models(["clip"])
+
     pdf_ext = pathlib.Path(pdf_file.filename or "").suffix.lower()
     if pdf_ext not in ALLOWED_PDF_EXT:
         raise HTTPException(status_code=400, detail=f"僅支援 PDF 檔案，收到: {pdf_ext}")

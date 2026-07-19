@@ -25,6 +25,7 @@ from backend.ocr_engine import (
     unload_ocr_models,
     update_correction_map,
 )
+from backend.model_availability import require_models
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
 
@@ -113,6 +114,13 @@ async def ocr_process(
             status_code=400,
             detail=f"不支援的 output_format: {output_format}",
         )
+
+    required_models = []
+    if normalized_provider == "local":
+        required_models.append("glm_ocr")
+    if enable_layout and normalized_task == "document":
+        required_models.append("pp_doclayout")
+    require_models(required_models)
 
     max_retries = max(1, min(max_retries, 5))
     dpi = max(72, min(dpi, 300))

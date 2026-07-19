@@ -1,12 +1,13 @@
 ﻿import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useNetwork } from '../context/NetworkContext.jsx'
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
+import { useModels } from '../context/ModelContext.jsx'
 
 export default function NewTask() {
-    const { offline, isModelCached } = useNetwork()
-    const asrMissing = offline && (!isModelCached('asr_1.7b') || !isModelCached('forced_aligner'))
+    const { findModelKey } = useModels()
     const [config, setConfig] = useState(null)
+    const [configError, setConfigError] = useState('')
     const [file, setFile] = useState(null)
     const [model, setModel] = useState('')
     const [language, setLanguage] = useState('')
@@ -14,12 +15,17 @@ export default function NewTask() {
     const [traditional, setTraditional] = useState(true)
     const [submitting, setSubmitting] = useState(false)
     const [dragOver, setDragOver] = useState(false)
+    const [error, setError] = useState('')
     const fileInputRef = useRef(null)
     const navigate = useNavigate()
 
-    useEffect(() => {
+    const loadConfig = () => {
+        setConfigError('')
         fetchWithAuth('/api/config')
-            .then(res => res.json())
+            .then(async res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                return res.json()
+            })
             .then(data => {
                 setConfig(data)
                 const modelKeys = Object.keys(data.models)
@@ -27,8 +33,18 @@ export default function NewTask() {
                 const langKeys = Object.keys(data.languages)
                 if (langKeys.length > 0) setLanguage(langKeys[0])
             })
-            .catch(err => console.error('Failed to load config:', err))
+            .catch(err => setConfigError(`無法載入辨識設定：${err.message}`))
+    }
+
+    useEffect(() => {
+        loadConfig()
     }, [])
+
+    const selectedModelKey = config && model
+        ? findModelKey(config.models[model]) || (model.includes('0.6B') ? 'asr_0.6b' : 'asr_1.7b')
+        : null
+    const requiredModels = [selectedModelKey, 'forced_aligner', diarization ? 'diarization' : null]
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels)
 
     const handleDrop = (e) => {
         e.preventDefault()
@@ -38,8 +54,16 @@ export default function NewTask() {
     }
 
     const handleSubmit = async () => {
-        if (!file) return alert('請先選擇音訊檔案')
+        if (!file) {
+            setError('請先選擇音訊或影片檔案')
+            return
+        }
+        if (modelsBlocked) {
+            setError('必要模型尚未就緒，請先透過 Manager 完成下載')
+            return
+        }
         setSubmitting(true)
+        setError('')
 
         try {
             const formData = new FormData()
@@ -49,8 +73,7 @@ export default function NewTask() {
             formData.append('enable_diarization', diarization)
             formData.append('to_traditional', traditional)
 
-            const token = localStorage.getItem('token') || '';
-            const res = await fetchWithAuth(`/api/tasks?token=${token}`, {
+            const res = await fetchWithAuth('/api/tasks', {
                 method: 'POST',
                 body: formData,
             })
@@ -62,16 +85,26 @@ export default function NewTask() {
             const task = await res.json()
             navigate(`/tasks/${task.id}`)
         } catch (err) {
-            alert(`錯誤: ${err.message}`)
+            setError(err.message)
             setSubmitting(false)
         }
     }
 
     if (!config) {
         return (
-            <div className="empty-state fade-in">
-                <div className="spinner" style={{ width: 32, height: 32 }}></div>
-                <p style={{ marginTop: 16 }}>載入設定...</p>
+            <div className="empty-state page-state fade-in">
+                {configError ? (
+                    <>
+                        <h2>無法載入辨識設定</h2>
+                        <p>{configError}</p>
+                        <button type="button" className="btn btn-primary" onClick={loadConfig}>重試</button>
+                    </>
+                ) : (
+                    <>
+                        <div className="spinner" style={{ width: 32, height: 32 }} />
+                        <p>正在載入辨識設定</p>
+                    </>
+                )}
             </div>
         )
     }
@@ -83,21 +116,22 @@ export default function NewTask() {
                 <p>上傳音訊檔案並設定辨識參數</p>
             </div>
 
-            {asrMissing && (
-                <div className="model-warning">
-                    <span className="warning-icon">⚠️</span>
-                    <span>目前處於離線模式，ASR 模型尚未下載至本機。請先在有網路的環境中啟動系統並執行一次辨識以下載模型，之後即可離線使用。</span>
-                </div>
-            )}
+            <ModelRequirement modelKeys={requiredModels} title="語音辨識模型尚未就緒" />
 
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 {/* 上傳區域 */}
                 <div
                     className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
                     onClick={() => fileInputRef.current?.click()}
+                    onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') fileInputRef.current?.click()
+                    }}
                     onDrop={handleDrop}
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                     onDragLeave={() => setDragOver(false)}
+                    role="button"
+                    tabIndex="0"
+                    aria-label="選擇或拖放音訊檔案"
                 >
                     <input
                         type="file"
@@ -125,6 +159,8 @@ export default function NewTask() {
                     )}
                 </div>
             </div>
+
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
 
             {/* 設定面板 */}
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
@@ -190,7 +226,8 @@ export default function NewTask() {
                 <button
                     className="btn btn-primary btn-lg"
                     onClick={handleSubmit}
-                    disabled={!file || submitting}
+                    disabled={!file || submitting || modelsBlocked}
+                    title={modelsBlocked ? '必要模型尚未下載' : undefined}
                 >
                     {submitting ? (
                         <>

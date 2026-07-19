@@ -57,6 +57,12 @@ class ConfigResponse(BaseModel):
     device: dict
 
 
+class SentenceUpdateRequest(BaseModel):
+    """User-edited subtitle sentences for a completed task."""
+
+    sentences: List[dict[str, Any]]
+
+
 # ── YouTube SubSync ──
 
 class YouTubeAnalyzeRequest(BaseModel):

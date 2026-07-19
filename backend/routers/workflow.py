@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 from backend.clip_engine import search_similar_pages
 from backend.ocr_engine import DEFAULT_MODEL, build_ocr_prompt, _call_glm_ocr
+from backend.model_availability import require_models
 
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
@@ -32,6 +33,12 @@ async def clip_ocr_top1(
     model: str = Form(os.getenv("OCR_MODEL", DEFAULT_MODEL)),
     max_retries: int = Form(3),
 ):
+    normalized_provider = provider.strip().lower()
+    required_models = ["clip"]
+    if normalized_provider == "local":
+        required_models.append("glm_ocr")
+    require_models(required_models)
+
     # PDF check
     pdf_ext = pathlib.Path(pdf_file.filename or "").suffix.lower()
     if pdf_ext not in ALLOWED_PDF_EXT:

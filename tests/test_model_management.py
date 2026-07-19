@@ -9,11 +9,13 @@ from unittest.mock import patch
 
 from backend.model_cache import (
     get_hf_cache_dir,
-    get_paddlex_cache_dir,
     inspect_model_cache,
-    inspect_paddlex_model,
 )
 from backend.model_registry import MODEL_SPECS, MODEL_SPECS_BY_KEY
+from backend.model_availability import (
+    missing_model_specs,
+    model_key_for_id,
+)
 from manager.model_manager import (
     EVENT_PREFIX,
     ModelDownloadController,
@@ -48,6 +50,7 @@ class ModelCacheTests(unittest.TestCase):
         snapshot = repo / "snapshots" / "abc123"
         snapshot.mkdir(parents=True)
         (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors").write_bytes(b"weights")
         (repo / "refs").mkdir()
         (repo / "refs" / "main").write_text("abc123\n", encoding="utf-8")
 
@@ -116,6 +119,7 @@ class ModelCacheTests(unittest.TestCase):
         snapshot = repo / "snapshots" / "old123"
         snapshot.mkdir(parents=True)
         (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors").write_bytes(b"weights")
         (repo / "refs").mkdir()
         (repo / "refs" / "main").write_text("missing456", encoding="utf-8")
 
@@ -137,25 +141,62 @@ class ModelCacheTests(unittest.TestCase):
         del env["HUGGINGFACE_HUB_CACHE"]
         self.assertEqual(get_hf_cache_dir(env), Path("C:/hf-home") / "hub")
 
-    def test_paddlex_model_requires_config_and_weights(self):
-        model_dir = self.cache_dir / "PP-DocLayoutV3"
-        model_dir.mkdir()
-        (model_dir / "inference.yml").write_text("model: layout", encoding="utf-8")
+    def test_config_only_snapshot_is_partial(self):
+        repo = self._repo("org/config-only")
+        snapshot = repo / "snapshots" / "abc123"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (repo / "refs").mkdir()
+        (repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+
+        status = inspect_model_cache("org/config-only", self.cache_dir)
+
+        self.assertEqual(status.state, "partial")
+        self.assertFalse(status.cached)
+        self.assertIn("缺少模型權重", status.detail)
+
+    def test_weight_index_requires_every_referenced_shard(self):
+        repo = self._repo("org/sharded")
+        snapshot = repo / "snapshots" / "abc123"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors.index.json").write_text(
+            '{"weight_map":{"a":"model-00001-of-00002.safetensors",'
+            '"b":"model-00002-of-00002.safetensors"}}',
+            encoding="utf-8",
+        )
+        (snapshot / "model-00001-of-00002.safetensors").write_bytes(b"weights")
+        (repo / "refs").mkdir()
+        (repo / "refs" / "main").write_text("abc123", encoding="utf-8")
+
         self.assertEqual(
-            inspect_paddlex_model("PP-DocLayoutV3", self.cache_dir).state,
+            inspect_model_cache("org/sharded", self.cache_dir).state,
             "partial",
         )
-        (model_dir / "inference.pdiparams").write_bytes(b"weights")
-        status = inspect_paddlex_model("PP-DocLayoutV3", self.cache_dir)
-        self.assertTrue(status.cached)
-        self.assertEqual(status.state, "ready")
-
-    def test_paddlex_cache_environment(self):
-        resolved = get_paddlex_cache_dir({"PADDLE_PDX_CACHE_HOME": "C:/paddlex"})
-        self.assertEqual(resolved, Path("C:/paddlex") / "official_models")
+        (snapshot / "model-00002-of-00002.safetensors").write_bytes(b"weights")
+        self.assertEqual(
+            inspect_model_cache("org/sharded", self.cache_dir).state,
+            "ready",
+        )
 
 
 class ModelRegistryTests(unittest.TestCase):
+    def test_feature_guard_reports_missing_registered_models(self):
+        with patch("backend.model_availability.inspect_model_cache") as inspect:
+            inspect.side_effect = [
+                types.SimpleNamespace(cached=True),
+                types.SimpleNamespace(cached=False),
+            ]
+            missing = missing_model_specs(["clip", "glm_ocr", "clip"])
+
+        self.assertEqual([spec.key for spec in missing], ["glm_ocr"])
+
+    def test_model_id_resolves_to_frontend_registry_key(self):
+        self.assertEqual(
+            model_key_for_id("Qwen/Qwen3-ASR-1.7B-hf"),
+            "asr_1.7b",
+        )
+
     def test_windows_symlink_failure_falls_back_to_regular_files(self):
         with tempfile.TemporaryDirectory() as cache_dir:
             snapshot = Path(cache_dir) / "snapshots" / "abc123"
@@ -238,8 +279,11 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(len(ids), len(set(ids)))
         self.assertEqual(set(keys), set(MODEL_SPECS_BY_KEY))
-        self.assertEqual(MODEL_SPECS_BY_KEY["pp_doclayout"].source, "paddlex")
-        self.assertEqual(MODEL_SPECS_BY_KEY["pp_doclayout"].model_id, "PP-DocLayoutV3")
+        self.assertEqual(MODEL_SPECS_BY_KEY["pp_doclayout"].source, "huggingface")
+        self.assertEqual(
+            MODEL_SPECS_BY_KEY["pp_doclayout"].model_id,
+            "PaddlePaddle/PP-DocLayoutV3_safetensors",
+        )
 
     @patch("manager.model_manager.is_venv_exists", return_value=False)
     def test_download_requires_usable_venv(self, _is_venv):
@@ -249,10 +293,10 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertTrue(any(".venv" in line for line in output))
 
     @patch("manager.model_manager.is_venv_exists", return_value=True)
-    def test_paddlex_download_dispatches_to_provider_worker(self, _is_venv):
+    def test_layout_download_uses_transformers_huggingface_checkpoint(self, _is_venv):
         class FakeProcess:
             stdout = iter([
-                EVENT_PREFIX + '{"type":"start","model_id":"PP-DocLayoutV3"}\n',
+                EVENT_PREFIX + '{"type":"start","model_id":"PaddlePaddle/PP-DocLayoutV3_safetensors"}\n',
                 "downloaded\n",
             ])
 
@@ -262,7 +306,11 @@ class ModelRegistryTests(unittest.TestCase):
 
         missing = inspect_model_cache("missing/model", Path("Z:/does-not-exist"))
         ready = missing.__class__(
-            "PP-DocLayoutV3", "ready", True, "ok", snapshot_path="cache/model"
+            "PaddlePaddle/PP-DocLayoutV3_safetensors",
+            "ready",
+            True,
+            "ok",
+            snapshot_path="cache/model",
         )
         commands = []
         events = []
@@ -277,7 +325,7 @@ class ModelRegistryTests(unittest.TestCase):
         ):
             self.assertTrue(download_models(["pp_doclayout"], on_event=events.append))
 
-        self.assertEqual(commands[0][-2:], ["--source", "paddlex"])
+        self.assertEqual(commands[0][-2:], ["--source", "huggingface"])
         self.assertEqual(events[0]["type"], "start")
         self.assertEqual(events[0]["key"], "pp_doclayout")
 

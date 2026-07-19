@@ -38,20 +38,24 @@ def load_clip_model():
         return _clip_model, _clip_processor
 
     from transformers import CLIPModel, CLIPProcessor
-    from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+    from backend.network_utils import is_model_cached, make_offline_error_message
 
     model_name = MODEL_IDS["clip"]
 
-    if is_offline_mode() and not is_model_cached(model_name):
+    if not is_model_cached(model_name):
         raise RuntimeError(make_offline_error_message(model_name))
 
     print(f"[CLIP] 正在載入模型 {model_name} ...")
 
     _device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
-        _clip_model = CLIPModel.from_pretrained(model_name).to(_device)
+        _clip_model = CLIPModel.from_pretrained(
+            model_name, local_files_only=True
+        ).to(_device)
         _clip_model.eval()
-        _clip_processor = CLIPProcessor.from_pretrained(model_name)
+        _clip_processor = CLIPProcessor.from_pretrained(
+            model_name, local_files_only=True
+        )
     except (OSError, ConnectionError, Exception) as e:
         err_str = str(e).lower()
         if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):

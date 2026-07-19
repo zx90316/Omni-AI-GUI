@@ -6,7 +6,7 @@ import subprocess
 import threading
 from typing import Callable, Iterable
 
-from backend.model_cache import ModelCacheStatus, inspect_model_cache, inspect_paddlex_model
+from backend.model_cache import ModelCacheStatus, inspect_model_cache
 from backend.model_registry import MODEL_SPECS, get_model_spec
 from manager.config import PROJECT_ROOT, get_venv_python, is_venv_exists
 
@@ -92,8 +92,6 @@ def get_models_status() -> dict[str, ModelCacheStatus]:
 
 
 def _inspect(spec) -> ModelCacheStatus:
-    if spec.source == "paddlex":
-        return inspect_paddlex_model(spec.model_id)
     return inspect_model_cache(spec.model_id)
 
 

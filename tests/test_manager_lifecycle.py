@@ -13,6 +13,13 @@ from manager.process_manager import (
     ProcessManager,
     ProcessStatus,
     _health_url,
+    _service_creation_flags,
+)
+from manager.env_schema import (
+    EnvValidationResult,
+    initial_env_values,
+    validate_env_file,
+    validate_env_values,
 )
 from launch import get_project_override, is_project_directory
 from manager import git_manager
@@ -49,6 +56,51 @@ class ConfigLifecycleTests(unittest.TestCase):
                 loaded = manager_config.load_config()
         self.assertEqual(loaded["backend_port"], 8123)
         self.assertFalse(config_file.with_suffix(".json.tmp").exists())
+
+
+class EnvConfigurationTests(unittest.TestCase):
+    def test_empty_fields_receive_safe_form_defaults_and_generated_secret(self):
+        values = initial_env_values({})
+        self.assertEqual(values["OCR_PROVIDER"], "local")
+        self.assertEqual(values["OCR_MAX_WORKERS"], "8")
+        self.assertEqual(values["ASR_TASK_TIMEOUT_SECONDS"], "14400")
+        self.assertGreaterEqual(len(values["SECRET_KEY"]), 32)
+        self.assertEqual(values["SMTP_USER"], "")
+
+    def test_complete_values_pass_validation(self):
+        values = initial_env_values(
+            {
+                "SMTP_USER": "owner@example.com",
+                "SMTP_PASSWORD": "application-password",
+            }
+        )
+        result = validate_env_values(values)
+        self.assertTrue(result.valid, result.errors)
+        self.assertEqual(values["SMTP_FROM_EMAIL"], "owner@example.com")
+
+    def test_missing_personal_values_block_startup(self):
+        result = validate_env_values(initial_env_values({}))
+        self.assertFalse(result.valid)
+        self.assertIn("SMTP_USER", result.missing_keys)
+        self.assertIn("SMTP_PASSWORD", result.missing_keys)
+
+    def test_openai_ocr_requires_api_url(self):
+        values = initial_env_values(
+            {
+                "OCR_PROVIDER": "openai",
+                "SMTP_USER": "owner@example.com",
+                "SMTP_PASSWORD": "application-password",
+            }
+        )
+        result = validate_env_values(values)
+        self.assertFalse(result.valid)
+        self.assertIn("OCR_API_URL", result.missing_keys)
+
+    def test_missing_env_file_is_invalid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = validate_env_file(Path(temp_dir) / ".env")
+        self.assertFalse(result.valid)
+        self.assertIn("SECRET_KEY", result.missing_keys)
 
 
 class BootstrapLifecycleTests(unittest.TestCase):
@@ -108,6 +160,32 @@ class PythonEnvironmentLifecycleTests(unittest.TestCase):
 
 
 class ManagedProcessLifecycleTests(unittest.TestCase):
+    def test_windows_service_flags_include_no_window(self):
+        from manager import process_manager
+
+        with (
+            patch.object(process_manager.os, "name", "nt"),
+            patch.object(process_manager.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+            patch.object(process_manager.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True),
+        ):
+            flags = _service_creation_flags()
+        self.assertTrue(flags & 0x08000000)
+
+    def test_incomplete_env_blocks_service_before_process_checks(self):
+        manager = ProcessManager.__new__(ProcessManager)
+        output = []
+        manager.on_output = lambda name, line: output.append((name, line))
+        invalid = EnvValidationResult(False, (), ("SMTP_USER",))
+
+        with (
+            patch("manager.process_manager.validate_env_file", return_value=invalid),
+            patch("manager.process_manager.is_venv_exists") as venv_check,
+        ):
+            self.assertFalse(manager.start_backend())
+
+        venv_check.assert_not_called()
+        self.assertTrue(any("SMTP_USER" in line for _name, line in output))
+
     def test_short_lived_process_reports_stopped(self):
         statuses = []
         process = ManagedProcess(

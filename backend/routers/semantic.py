@@ -15,6 +15,7 @@ from backend.semantic_engine import (
     init_semantic_models,
     start_worker
 )
+from backend.model_availability import require_models
 
 router = APIRouter(
     prefix="/semantic",
@@ -82,6 +83,7 @@ async def process_request(model_name: str, data: Dict[str, Any], timeout: float 
 # ================= 路由 =================
 @router.post("/rerank", summary="計算文本對的相關性分數")
 async def compute_rerank_scores(request: RerankRequest):
+    require_models(["bge_reranker"])
     if not request.pairs:
         raise HTTPException(status_code=400, detail="文本對列表不能為空")
         
@@ -94,6 +96,7 @@ async def compute_rerank_scores(request: RerankRequest):
 
 @router.post("/embed", summary="生成文本的向量嵌入 (Embedding)")
 async def create_embeddings(request: EmbeddingRequest):
+    require_models(["bge_embedding"])
     if not request.sentences:
         raise HTTPException(status_code=400, detail="句子列表不能為空")
         

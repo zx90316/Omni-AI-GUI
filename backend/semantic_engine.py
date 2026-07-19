@@ -9,6 +9,7 @@ import asyncio
 import logging
 import gc
 import threading
+import types
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from asyncio import Queue, Future
@@ -39,6 +40,96 @@ class ResourceConfig:
     resource_check_interval: int = 100
 
 config = ResourceConfig()
+
+
+def _xlm_roberta_prepare_for_model(
+    tokenizer,
+    ids,
+    pair_ids=None,
+    add_special_tokens=True,
+    padding=False,
+    truncation=None,
+    max_length=None,
+    return_attention_mask=True,
+    return_token_type_ids=None,
+    return_special_tokens_mask=False,
+    **_kwargs,
+):
+    """Transformers 5 compatibility for FlagEmbedding's XLM-R reranker.
+
+    Transformers 5 removed ``prepare_for_model`` from tokenizers backed by the
+    Rust ``tokenizers`` library. FlagEmbedding 1.4 still calls that legacy API
+    after separately tokenizing the query and passage. BGE reranker v2-m3 uses
+    XLM-R's fixed ``<s> query </s></s> passage </s>`` sequence layout, so the
+    small adapter below preserves FlagEmbedding's existing preprocessing.
+    """
+    if padding not in (False, None, "do_not_pad"):
+        raise ValueError("XLM-R reranker compatibility adapter only supports padding=False")
+
+    first = list(ids)
+    second = list(pair_ids) if pair_ids is not None else None
+    special_token_count = 4 if second is not None else 2
+
+    if max_length is not None and len(first) + (len(second) if second else 0) + special_token_count > max_length:
+        overflow = len(first) + (len(second) if second else 0) + special_token_count - max_length
+        if second is None or truncation not in (True, "only_second"):
+            raise ValueError("Unsupported truncation mode for the XLM-R reranker compatibility adapter")
+        if overflow > len(second):
+            raise ValueError("Query is too long to fit within the reranker's max_length")
+        if getattr(tokenizer, "truncation_side", "right") == "left":
+            second = second[overflow:]
+        elif overflow:
+            second = second[:-overflow]
+
+    if add_special_tokens:
+        bos_token_id = tokenizer.bos_token_id
+        eos_token_id = tokenizer.eos_token_id
+        if bos_token_id is None or eos_token_id is None:
+            raise ValueError("XLM-R tokenizer is missing BOS/EOS token IDs")
+        if second is None:
+            input_ids = [bos_token_id, *first, eos_token_id]
+            special_tokens_mask = [1, *([0] * len(first)), 1]
+        else:
+            input_ids = [bos_token_id, *first, eos_token_id, eos_token_id, *second, eos_token_id]
+            special_tokens_mask = [1, *([0] * len(first)), 1, 1, *([0] * len(second)), 1]
+    else:
+        input_ids = first + (second or [])
+        special_tokens_mask = [0] * len(input_ids)
+
+    encoded = {"input_ids": input_ids}
+    if return_attention_mask is not False:
+        encoded["attention_mask"] = [1] * len(input_ids)
+    if return_special_tokens_mask:
+        encoded["special_tokens_mask"] = special_tokens_mask
+    if return_token_type_ids or (
+        return_token_type_ids is None
+        and "token_type_ids" in getattr(tokenizer, "model_input_names", [])
+    ):
+        encoded["token_type_ids"] = [0] * len(input_ids)
+    return encoded
+
+
+def _ensure_reranker_tokenizer_compatibility(reranker) -> bool:
+    """Install the narrow Transformers 5 adapter when FlagEmbedding needs it."""
+    tokenizer = getattr(reranker, "tokenizer", None)
+    if tokenizer is None:
+        raise RuntimeError("Reranker did not expose a tokenizer")
+    if callable(getattr(tokenizer, "prepare_for_model", None)):
+        return False
+    if tokenizer.__class__.__name__ != "XLMRobertaTokenizer":
+        raise RuntimeError(
+            f"Unsupported reranker tokenizer without prepare_for_model: "
+            f"{tokenizer.__class__.__name__}"
+        )
+
+    tokenizer.prepare_for_model = types.MethodType(
+        _xlm_roberta_prepare_for_model,
+        tokenizer,
+    )
+    logger.warning(
+        "已啟用 Transformers 5 / FlagEmbedding 的 XLM-R tokenizer 相容層"
+    )
+    return True
 
 # ================== 線程安全的模型容器 ==================
 class ModelContainer:
@@ -285,7 +376,7 @@ def init_semantic_models():
         logger.warning("未安裝 FlagEmbedding。請使用 `pip install FlagEmbedding` 來啟用 Semantic 引擎。")
         return False
 
-    from backend.network_utils import is_offline_mode, is_model_cached, make_offline_error_message
+    from backend.network_utils import is_model_cached, make_offline_error_message
 
     try:
         import torch
@@ -296,18 +387,17 @@ def init_semantic_models():
             torch.backends.cudnn.enabled = True
             os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
         
-        offline = is_offline_mode()
-
         # 1. Reranker
         from backend.model_registry import MODEL_IDS
 
         reranker_id = MODEL_IDS["bge_reranker"]
-        logger.info(f"正在載入 Reranker 模型 {reranker_id} (若無快取將自動下載)...")
+        logger.info(f"正在從本機快取載入 Reranker 模型 {reranker_id}...")
         try:
-            if offline and not is_model_cached(reranker_id):
+            if not is_model_cached(reranker_id):
                 logger.warning(make_offline_error_message(reranker_id))
             else:
                 reranker = FlagReranker(reranker_id, use_fp16=True, device=device)
+                _ensure_reranker_tokenizer_compatibility(reranker)
                 if hasattr(reranker, 'model'):
                     reranker.model.eval()
                     for param in reranker.model.parameters():
@@ -322,9 +412,9 @@ def init_semantic_models():
             
         # 2. Embedding
         embedding_id = MODEL_IDS["bge_embedding"]
-        logger.info(f"正在載入 Embedding 模型 {embedding_id} (若無快取將自動下載)...")
+        logger.info(f"正在從本機快取載入 Embedding 模型 {embedding_id}...")
         try:
-            if offline and not is_model_cached(embedding_id):
+            if not is_model_cached(embedding_id):
                 logger.warning(make_offline_error_message(embedding_id))
             else:
                 embedding_model = BGEM3FlagModel(embedding_id, use_fp16=True, device=device)

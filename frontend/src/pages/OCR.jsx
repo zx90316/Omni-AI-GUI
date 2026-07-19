@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchWithAuth } from '../utils/api.js'
+import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 
 const DEFAULT_MODEL = 'zai-org/GLM-OCR'
 
@@ -79,6 +80,13 @@ export default function OCR() {
         [capabilities, provider],
     )
     const taskInfo = TASKS.find(item => item.id === task)
+    const requiredModels = provider === 'local'
+        ? ['glm_ocr', task === 'document' && enableLayout ? 'pp_doclayout' : null]
+        : []
+    const { blocked: modelsBlocked } = useModelRequirement(requiredModels)
+    const providerUnavailable = currentProvider?.available === false
+    const layoutUnavailable = task === 'document' && enableLayout && capabilities && !capabilities.glmocr?.installed
+    const featureBlocked = modelsBlocked || providerUnavailable || layoutUnavailable
 
     const resetOutput = useCallback(() => {
         setResults([])
@@ -128,6 +136,10 @@ export default function OCR() {
     }
 
     const handleSubmit = async () => {
+        if (featureBlocked) {
+            setError('目前的 OCR 推論方式尚未就緒，請先完成模型或依賴安裝')
+            return
+        }
         if (!file) {
             setError('請先上傳檔案')
             return
@@ -232,6 +244,8 @@ export default function OCR() {
                 <h2>📄 GLM-OCR 文件辨識</h2>
                 <p>本機直接推論或連接推論服務；支援完整文件、文字、表格、公式與 JSON 欄位萃取</p>
             </div>
+
+            <ModelRequirement modelKeys={requiredModels} title="OCR 模型尚未就緒" />
 
             {!processing && results.length === 0 && (
                 <div className={`ocr-layout ${task !== 'extract' ? 'ocr-layout-full' : ''}`}>
@@ -365,7 +379,13 @@ export default function OCR() {
             {error && !processing && <div className="ocr-error"><span>⚠️</span> {error}</div>}
 
             {!processing && results.length === 0 && (
-                <button className="btn btn-primary btn-lg" style={{ marginTop: 24 }} onClick={handleSubmit} disabled={!file}>
+                <button
+                    className="btn btn-primary btn-lg"
+                    style={{ marginTop: 24 }}
+                    onClick={handleSubmit}
+                    disabled={!file || featureBlocked}
+                    title={featureBlocked ? '目前的模型或推論依賴尚未就緒' : undefined}
+                >
                     🔍 開始 GLM-OCR 辨識
                 </button>
             )}

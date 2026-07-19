@@ -15,8 +15,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from backend.database import Task, get_db
-from backend.schemas import TaskResponse, TaskDetailResponse, ConfigResponse
+from backend.schemas import (
+    ConfigResponse,
+    SentenceUpdateRequest,
+    TaskDetailResponse,
+    TaskResponse,
+)
 from backend.auth_utils import get_current_user
+from backend.model_availability import require_asr_models
 
 from backend.config import (
     ASR_MAX_UPLOAD_MB,
@@ -96,6 +102,8 @@ async def create_task(
         raise HTTPException(status_code=400, detail=f"不支援的模型: {model}")
     if language not in LANGUAGES:
         raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
+
+    require_asr_models(MODELS[model], diarization=enable_diarization)
 
     import uuid
     # Generate a local video id
@@ -224,6 +232,44 @@ def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = D
         sentences=task.get_sentences(),
         diarization_result=task.get_diarization_result(),
     )
+
+
+@router.put("/tasks/{task_id}/sentences")
+def update_task_sentences(
+    task_id: int,
+    payload: SentenceUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Persist manual subtitle edits without routing content through an LLM API."""
+    task = db.query(Task).filter(
+        Task.id == task_id,
+        Task.owner_id == current_user["owner_id"],
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到任務")
+    if task.status in {"pending", "processing", "cancelling"}:
+        raise HTTPException(status_code=409, detail="任務執行期間無法修改字幕")
+    if len(payload.sentences) > 100_000:
+        raise HTTPException(status_code=413, detail="字幕段落數量過多")
+
+    for index, sentence in enumerate(payload.sentences):
+        text = sentence.get("text")
+        if not isinstance(text, str):
+            raise HTTPException(
+                status_code=422,
+                detail=f"第 {index + 1} 段字幕缺少有效文字",
+            )
+        if len(text) > 20_000:
+            raise HTTPException(
+                status_code=422,
+                detail=f"第 {index + 1} 段字幕文字過長",
+            )
+
+    task.set_sentences(payload.sentences)
+    db.commit()
+    db.refresh(task)
+    return {"message": "字幕已儲存", "sentences": task.get_sentences()}
 
 
 @router.delete("/tasks/{task_id}")
