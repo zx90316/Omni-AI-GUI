@@ -1,89 +1,171 @@
-# Omni AI
+# Omni AI Manager
 
-全方位語音辨識與多模態 AI 處理工具，支援高精度語音辨識、語者分離、影片下載、圖片搜尋、OCR 文字擷取、語意分析，並提供現代化的 Manager 與 Web 前端管理介面。
+[![CI](https://github.com/zx90316/Omni-AI-GUI/actions/workflows/ci.yml/badge.svg)](https://github.com/zx90316/Omni-AI-GUI/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10–3.13](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB.svg)](https://www.python.org/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 
-## ✨ 核心大模型功能
+Windows 優先的本機多模態 AI 工作台。Omni AI Manager 將模型安裝、服務監督、語音辨識、文件 OCR、以圖搜頁與語意分析整合在一個桌面管理器和 Web 介面中；模型權重由 Manager 明確下載，Backend 推論時保持 local-only，避免操作功能時意外下載大型模型。
 
-- 🎙️ **語音辨識 (ASR)** — 使用 Qwen 官方 Transformers-native `Qwen3-ASR-1.7B-hf` / `0.6B-hf`，支援語言偵測、官方 Forced Aligner 時間戳與臺灣慣用繁體中文。
-- 👥 **語者分離** — 整合 pyannote.audio，自動識別音訊中的多位說話者。
-- � **圖片搜尋 (ClipSearch)** — 基於視覺模型 (CLIP) 的語意圖片檢索系統。
-- 📄 **GLM-OCR 文件辨識** — 專案內直接推論（不需要 Ollama），支援完整文件版面解析、文字、表格、公式、JSON 欄位萃取與 Markdown/JSON 匯出；亦可切換 vLLM、SGLang 或 Ollama。
-- 🧠 **語意引擎 (Semantic)** — 支援文本 Embedding 與 Reranking，為檢索系統增強精確度。
-- ⚙️ **整合工作流 (Workflow)** — 將多個 AI 模組串聯（例：ClipSearch 檢索影像後，透過 OCR 自動提取關鍵欄位）。
+> 專案目前定位為可信任工作站或受控區域網路服務，不是已完成隔離、配額、稽核與高可用設計的公開多租戶 SaaS。公開部署前請先閱讀 [安全政策](SECURITY.md) 與 [架構文件](docs/ARCHITECTURE.md)。
 
-## 🚀 系統與進階功能
+## 功能
 
-- 🖥️ **Manager 管理面板 (GUI)** — 現代化設定介面，提供一鍵安裝依賴、啟動/停止服務、一鍵版本更新與模型預下載。
-- 📦 **單一執行檔與自動部屬** — 提供打包好的 `.exe` 檔，支援首次執行自動 `git clone` 專案與環境建置。
-- 🌐 **Web 前端介面 (React + Vite)** — 優雅且響應式的網頁介面，提供視覺化任務列表與多模組操作。
-- 🎥 **YouTube 解析與下載** — 內建 YT 影片下載功能，可直接貼上網址並送入排程。
-- � **SubSync 字幕優化** — 支援動態重新分段與標點符號一鍵移除，提升字幕閱讀性。
-- �📋 **統一任務管理** — 單一列表監控所有本機檔案、下載與 AI 處理任務的系統。
+| 領域 | 能力 |
+| --- | --- |
+| 語音 | 本機／YouTube／上傳媒體 ASR、片段範圍選取、Forced Alignment、語者分離、繁簡轉換、字幕編修與 SRT/VTT/TXT/JSON 匯出 |
+| 視覺 | GLM-OCR 圖片與 PDF 辨識、表格／公式／資訊抽取、形近字修正、OCR 模型卸載 |
+| 檢索 | CLIP 圖像特徵擷取、PDF 頁面相似度搜尋、Top-1 頁面接續 OCR workflow |
+| 語意 | BGE-M3 embedding 與 BGE Reranker v2 M3 重排序 |
+| 管理 | Python/Node/FFmpeg 環境建立、GPU/PyTorch 平台偵測、模型快取驗證與下載、Backend/Frontend 健康檢查、自動重啟、持久化日誌 |
+| 存取 | 訪客工作區或 Email OTP 登入、JWT 擁有者隔離；推論端點皆需驗證 |
 
-## 📋 安裝與啟動
+## 系統架構
 
-### 方式一：下載可執行檔（最簡單推薦）
+```mermaid
+flowchart LR
+    U["使用者"] --> M["Manager 桌面 GUI"]
+    M --> E["環境、FFmpeg 與模型管理"]
+    M --> P["程序監督與健康檢查"]
+    P --> F["React + Vite Frontend"]
+    P --> B["FastAPI Backend"]
+    F -->|"JWT + REST / SSE"| B
+    B --> D[("SQLite")]
+    B --> R["本機 AI Runtime"]
+    R --> H["Hugging Face Cache"]
+```
 
-前往 [GitHub Releases](https://github.com/zx90316/Omni-AI-GUI/releases) 下載最新的 `Omni-AI-Manager`，解壓縮後雙擊執行 `.exe` 檔。程式會自動偵測環境，若不在專案目錄中將引導你自動下載專案原始碼，並自動配置 Python 虛擬環境 (`.venv`) 與安裝依賴套件。
+Manager 是生命週期擁有者；Backend 不會自行下載缺少的模型。完整元件責任、任務狀態與資料流請見 [架構文件](docs/ARCHITECTURE.md)。
 
-### 方式二：從原始碼啟動
+## 系統需求
 
-```bash
+- Windows 10/11（主要支援與打包目標）
+- Python 3.10–3.13；建議 Python 3.12
+- Node.js 20 以上與 npm
+- Git
+- NVIDIA GPU 為選配；大型模型建議使用 CUDA，CPU 模式速度與可用功能依模型而異
+- 足夠磁碟空間存放 Python 套件、前端依賴與多個 Hugging Face 模型 snapshot
+
+FFmpeg 可由 Manager 偵測／下載，也可預先安裝在系統 `PATH`。
+
+## 快速開始
+
+```powershell
+git clone https://github.com/zx90316/Omni-AI-GUI.git
+Set-Location Omni-AI-GUI
 python launch.py
 ```
-> **提示**：系統將透過 `launch.py` 啟動前端 Manager 面板。你可於介面中一鍵建立 `.venv` 虛擬環境、執行 `pip install`、`npm install` 並自動下載設定 FFmpeg。
 
-Manager 的「安裝/更新 → 模型管理」會列出所有本機 AI 模型的快取狀態。可先選擇模型下載，或一次下載全部缺少／不完整的模型；下載完成後會進行本機 snapshot 驗證，無需等到實際使用 ASR、OCR、CLIP 或 Semantic 功能才開始下載。
+第一次啟動後，在 Manager 依序完成：
 
-模型下載會顯示可用的位元組進度與驗證階段，亦可中途取消；部分 Hugging Face 快取會保留供下次續用。前後端只有通過 HTTP readiness 後才顯示為已啟動，執行日誌保存在 `.manager/logs/`。若關閉 Manager 時選擇保留服務，下次啟動會驗證 PID 與服務健康後重新接管。
+1. 建立或修復 `.venv`，安裝 Python 與 Frontend 依賴。
+2. 開啟環境設定，填入必要值並儲存 `.env`。
+3. 在模型頁下載所需功能的模型；語者分離需要已取得授權的 Hugging Face Token。
+4. 啟動 Backend 與 Frontend，再從 Manager 開啟 Web 工作台。
 
-建議使用 Qwen 官方指引採用的 Python 3.12，並確保 Git 可從命令列使用。Manager 會優先尋找 Python 3.12；若舊 `.venv` 指向已移除的 Python，會提示並重建。Transformers 目前鎖定含 Qwen3-ASR 原生支援的 Hugging Face 官方 commit，避免追蹤浮動 `main`。
+Manager 會優先使用專案內 `.python-runtime`、執行中的 Python、Windows `py -3.12` 或系統 Python。虛擬環境會記住建立它的基礎 Python 路徑，因此搬移專案或移除 Python 後應由 Manager 重建 `.venv`，不要複製舊環境到另一台電腦。
 
-### 🔑 環境變數與模型設定
+## 手動開發啟動
 
-Manager 的「設定 → 設定 .env 參數」會依欄位型態提供下拉選單、預設值與輸入範例，並在儲存前驗證必要設定。`.env` 尚未建立、必要欄位空白或格式不正確時，Backend、Frontend、自動啟動與健康監督重啟都會被阻擋。
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-- **Pyannote (語者分離)**：於 Manager 介面設定或新增 `.env` 檔案，填入 [HuggingFace Token](https://huggingface.co/settings/tokens)：
-  ```env
-  HF_TOKEN=hf_your_token_here
-  ```
-- **ASR**：預設使用 60 秒低能量邊界切段、官方 HF-native 轉錄與 `Qwen3-ForcedAligner-0.6B-hf`。長音訊以串流方式偵測靜音，任務支援安全取消與逾時保護；精確對齊失敗時會保留轉錄並明確標示近似時間戳。可用 `ASR_MAX_NEW_TOKENS`、`ASR_MAX_UPLOAD_MB`、`ASR_TASK_TIMEOUT_SECONDS` 調整限制；相容環境可另行安裝 FlashAttention 並設 `ASR_ATTN_IMPLEMENTATION=flash_attention_2`。
-- **OCR**：預設 `OCR_PROVIDER=local`，需先在 Manager 下載 `zai-org/GLM-OCR`；完整文件的版面模式另需 PP-DocLayoutV3。模型未就緒時前端會顯示狀態並停用功能，不會在首次使用時下載。正式或多人使用環境可把 `OCR_PROVIDER` 設為 `openai` 並以 `OCR_API_URL` 連接 vLLM/SGLang。Ollama 僅保留為相容選項。
-- **本地模型存放**：所有模型都使用 Hugging Face Hub 快取（可用 `HF_HUB_CACHE` 或 `HF_HOME` 改變位置）。GLM-OCR 0.1.5 的版面偵測使用 Transformers 版 `PaddlePaddle/PP-DocLayoutV3_safetensors`，不需要 PaddleX。Manager 會區分「已存在、缺少、不完整」三種狀態。
+Copy-Item .env.example .env
+# 編輯 .env，至少替換 SECRET_KEY 與 SMTP 範例值
 
-### 🌐 使用 Web 介面
-於 Manager 面板依序點擊「啟動 Backend」與「啟動 Frontend」，接著按「🌐 開啟前端頁面」即可在瀏覽器使用完整服務介面。
+Set-Location frontend
+npm.cmd ci
+Set-Location ..
 
-## 🖥️ 效能與系統需求 (參考)
+# Terminal 1
+.\.venv\Scripts\python.exe -m uvicorn backend.app:app --host 0.0.0.0 --port 8000
 
-| AI 功能 | 模型/服務 | VRAM / RAM |
-|------|------|-----------| 
-| ASR (GPU) | Qwen3 1.7B | 12 GB VRAM |
-| ASR (GPU) | Qwen3 0.6B | 10 GB VRAM |
-| ASR (CPU) | Qwen3 0.6B | 10 GB RAM |
-| OCR（本機直接推論） | GLM-OCR 0.9B BF16 | 建議 NVIDIA GPU；CPU 可執行但較慢 |
-| Semantic | BGE 等語意模型 | 具備基礎系統資源即可 |
-
-*提示：ASR 語音辨識功能建議採用具備 CUDA 加速的 Nvidia GPU 以獲得最佳轉換速度。*
-
-## 📁 主要專案結構
-
-```
-├── launch.py              # Manager 管理面板啟動入口（與打包來源）
-├── manager/               # Manager 管理面板核心模組
-├── frontend/              # React + Vite 前端網頁原始碼
-├── backend/               # FastAPI 後端 API 服務
-│   ├── app.py             # FastAPI 應用入口
-│   ├── routers/           # API 路由 (asr, clip_search, ocr, semantic, tasks, workflow, youtube 等)
-│   ├── *_engine.py        # 核心 AI 推理引擎 (asr_engine, clip_engine, ocr_engine, semantic_engine 等)
-│   ├── config.py          # 全域配置管理
-│   ├── database.py        # 資料庫模型與操作
-│   └── audio_utils.py     # 音訊處理工具
-├── requirements.txt       # Python 依賴清單
-├── .env.example           # 環境變數範例檔
-└── omni_ai.db             # SQLite 工作任務與資料庫
+# Terminal 2
+Set-Location frontend
+$env:BACKEND_PORT = "8000"
+npm.cmd run dev -- --host localhost --port 5173
 ```
 
-## 📜 授權
+開啟 <http://localhost:5173>。Backend health endpoints 為 `/health/live` 與 `/health/ready`，OpenAPI UI 為 <http://localhost:8000/docs>。實際 Manager 連接埠由 `manager_config.json` 決定，可能與上述開發預設值不同。
 
-MIT License
+詳細步驟、CPU/CUDA 安裝差異與常見錯誤請見 [開發指南](docs/DEVELOPMENT.md)；所有環境變數請見 [設定參考](docs/CONFIGURATION.md)。
+
+## 模型與資源
+
+| 功能 | 模型 |
+| --- | --- |
+| ASR | `Qwen/Qwen3-ASR-1.7B-hf` 或 `Qwen/Qwen3-ASR-0.6B-hf` |
+| Forced Alignment | `Qwen/Qwen3-ForcedAligner-0.6B-hf` |
+| 語者分離 | `pyannote/speaker-diarization-community-1`（gated） |
+| CLIP | `openai/clip-vit-large-patch14` |
+| Embedding | `BAAI/bge-m3` |
+| Reranking | `BAAI/bge-reranker-v2-m3` |
+| OCR | `zai-org/GLM-OCR` |
+| OCR Layout | `PaddlePaddle/PP-DocLayoutV3_safetensors` |
+
+模型只在使用 Manager 執行明確下載時連網；下載完成後，Backend 以本機 cache 驗證 snapshot、權重與必要分片。模型授權與使用限制由各上游模型條款決定，不因本專案採 MIT 而改變。
+
+## 建置與測試
+
+Frontend production build：
+
+```powershell
+Set-Location frontend
+npm.cmd ci
+npm.cmd run build
+```
+
+Python 語法與離線單元測試：
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q backend manager tests launch.py
+.\.venv\Scripts\python.exe -m unittest -v `
+  tests.test_manager_lifecycle `
+  tests.test_model_management `
+  tests.test_semantic_engine `
+  tests.test_glmocr `
+  tests.test_asr_stability `
+  tests.test_asr_api
+```
+
+`tests/test_auth.py` 與 `tests/test_email.py` 是需要執行中 Backend／SMTP 的手動整合腳本，不屬於離線單元測試。測試分層與 GPU 驗收項目詳見 [開發指南](docs/DEVELOPMENT.md#測試策略)。
+
+## 專案結構
+
+```text
+backend/                 FastAPI、任務路由、資料庫與 AI engines/providers
+frontend/                React 19 + Vite Web 工作台
+manager/                 ttkbootstrap GUI、環境／模型／程序管理
+tests/                   離線單元測試與手動整合腳本
+docs/                    架構、設定、開發、發布與研究報告
+.github/                 CI、Dependabot、Issue 與 PR templates
+launch.py                Manager 啟動／打包入口
+release.bat              Windows Manager 建置與 GitHub Release 腳本
+requirements*.txt        Runtime、OCR 與開發依賴
+manager_config.json      Manager 本機服務與監督設定
+```
+
+`.env`、`.venv/`、`.manager/`、`uploads/`、`results/`、資料庫、模型 cache、FFmpeg bundle、建置產物與媒體檔都屬本機 runtime 資產，不應提交。
+
+## 文件
+
+- [文件索引](docs/README.md)
+- [專案生命週期與建置研究報告](docs/PROJECT_RESEARCH_REPORT.md)
+- [架構與資料流](docs/ARCHITECTURE.md)
+- [開發與測試](docs/DEVELOPMENT.md)
+- [設定參考](docs/CONFIGURATION.md)
+- [發布流程](docs/RELEASE.md)
+- [變更紀錄](CHANGELOG.md)
+- [貢獻指南](CONTRIBUTING.md)
+- [安全政策](SECURITY.md)
+- [行為準則](CODE_OF_CONDUCT.md)
+
+## 貢獻
+
+歡迎 Issue 與 Pull Request。提交前請先閱讀 [CONTRIBUTING.md](CONTRIBUTING.md)，確認沒有包含 `.env`、Token、Email、媒體、模型權重、資料庫或其他個人資料，並附上與變更風險相稱的測試證據。
+
+## 授權
+
+本專案程式碼依 [MIT License](LICENSE) 授權。第三方套件、模型權重、資料集與 FFmpeg binary 各自適用其原始授權；使用者有責任確認部署與資料處理符合法令及上游條款。

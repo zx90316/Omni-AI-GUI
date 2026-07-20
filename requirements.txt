@@ -6,7 +6,6 @@ torchvision==0.25.0
 torchaudio==2.10.0
 
 # Qwen3-ASR HF-native 與 GLM-OCR 共用 Transformers 5.x。
-# Qwen3-ASR 於 2026-06-26 合入 Transformers；鎖官方 commit 避免浮動 main。
 transformers @ git+https://github.com/huggingface/transformers.git
 huggingface_hub
 accelerate>=1.12.0

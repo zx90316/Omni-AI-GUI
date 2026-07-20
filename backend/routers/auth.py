@@ -4,7 +4,7 @@ Authentication 路由
 處理信箱驗證碼寄發、驗證，以及訪客 Token 發放
 """
 import uuid
-import random
+import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +34,7 @@ class TokenResponse(BaseModel):
 @router.post("/send-code")
 def send_code(req: SendCodeRequest, db: Session = Depends(get_db)):
     # 產生 6 位數隨機數字
-    code = "".join(random.choices(string.digits, k=6))
+    code = "".join(secrets.choice(string.digits) for _ in range(6))
     expire_time = datetime.now(timezone.utc) + timedelta(minutes=5)
 
     user = db.query(User).filter(User.email == req.email).first()

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/zx90316/Omni-AI-GUI/security/advisories/new
+    about: 請私下回報安全漏洞，不要建立公開 Issue。
+  - name: Documentation
+    url: https://github.com/zx90316/Omni-AI-GUI/tree/master/docs
+    about: 提問前先查看架構、設定、開發與發布文件。

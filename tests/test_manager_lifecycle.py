@@ -168,6 +168,20 @@ class PythonEnvironmentLifecycleTests(unittest.TestCase):
         self.assertEqual(command, [str(runtime)])
         self.assertEqual(version, (3, 12))
 
+    def test_frontend_install_uses_lockfile_when_available(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "package.json").write_text("{}", encoding="utf-8")
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            with (
+                patch.object(env_manager, "check_internet", return_value=True),
+                patch.object(env_manager, "get_frontend_dir", return_value=root),
+                patch.object(env_manager, "_run_command", return_value=(True, "")) as run,
+            ):
+                self.assertTrue(env_manager.install_frontend_deps())
+
+        self.assertEqual(run.call_args.args[0][1], "ci")
+
 
 class ManagedProcessLifecycleTests(unittest.TestCase):
     def test_windows_service_flags_include_no_window(self):
@@ -391,6 +405,40 @@ class BackendHealthContractTests(unittest.TestCase):
         ready = backend_app.health_ready()
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["semantic"], "loading")
+
+    def test_inference_routes_require_authentication(self):
+        try:
+            import importlib
+
+            backend_app = importlib.import_module("backend.app")
+            from backend.auth_utils import get_current_user
+        except ImportError as exc:
+            self.skipTest(f"backend runtime dependencies not installed: {exc}")
+
+        protected_routers = (
+            backend_app.tasks_router,
+            backend_app.youtube_router,
+            backend_app.ocr_router,
+            backend_app.clip_search_router,
+            backend_app.workflow_router,
+            backend_app.semantic_router,
+        )
+        included_routers = [
+            route
+            for route in backend_app.app.routes
+            if hasattr(route, "original_router")
+        ]
+        for protected_router in protected_routers:
+            included = next(
+                route
+                for route in included_routers
+                if route.original_router is protected_router
+            )
+            dependency_calls = {
+                dependency.dependency
+                for dependency in included.include_context.dependencies
+            }
+            self.assertIn(get_current_user, dependency_calls, protected_router.prefix)
 
 
 if __name__ == "__main__":

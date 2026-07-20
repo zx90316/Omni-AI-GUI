@@ -56,16 +56,18 @@ app.add_middleware(
 )
 
 # ── 路由掛載（需驗證）──
+# All inference endpoints can consume substantial CPU/GPU resources.  Keep
+# only authentication, health checks, and the read-only system status public.
 auth_required = [Depends(get_current_user)]
 app.include_router(tasks_router, dependencies=auth_required)
 app.include_router(youtube_router, dependencies=auth_required)
+app.include_router(ocr_router, dependencies=auth_required)
+app.include_router(clip_search_router, dependencies=auth_required)
+app.include_router(workflow_router, dependencies=auth_required)
+app.include_router(semantic_router, dependencies=auth_required)
 
 # ── 路由掛載（無需驗證）──
 app.include_router(auth_router)
-app.include_router(ocr_router)
-app.include_router(clip_search_router)
-app.include_router(workflow_router)
-app.include_router(semantic_router)
 app.include_router(system_router)
 
 

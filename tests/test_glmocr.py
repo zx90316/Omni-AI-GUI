@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import importlib.util
 import io
+import os
 import unittest
 import sys
 import types
@@ -91,6 +92,7 @@ class OCRTests(unittest.TestCase):
         fake_transformers.AutoModelForImageTextToText = FakeAutoModel
         with (
             patch.dict(sys.modules, {"transformers": fake_transformers}),
+            patch.dict(os.environ, {"OCR_DEVICE": "auto"}),
             patch("backend.network_utils.is_model_cached", return_value=True),
         ):
             provider = TransformersOCRProvider()

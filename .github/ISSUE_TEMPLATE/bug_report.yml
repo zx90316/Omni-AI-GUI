@@ -1,0 +1,46 @@
+name: Bug report
+description: 回報可重現的錯誤或退化
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 請先移除 Token、Email、媒體內容、完整本機路徑與其他敏感資料。安全漏洞請依 SECURITY.md 私下通報。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 問題摘要
+      description: 實際結果、預期結果與使用者影響。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 重現步驟
+      placeholder: |
+        1. 啟動...
+        2. 選擇...
+        3. 看到...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境
+      description: Commit/tag、Windows、Python、Node、GPU/driver、模型與 provider（不要貼 Secret）。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 最小化 log／畫面
+      description: 請遮蔽個資與 Secret；貼出錯誤前後必要範圍即可。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認
+      options:
+        - label: 我已搜尋現有 Issue。
+          required: true
+        - label: 我已移除 Secret、個資與受保護媒體。
+          required: true

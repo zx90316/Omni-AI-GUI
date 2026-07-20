@@ -3,7 +3,7 @@
 虛擬環境與依賴管理模組
 
 負責建立 .venv、安裝 Python 依賴（含 PyTorch CUDA 偵測）、
-安裝前端依賴 (npm install)、以及完整重新安裝功能。
+安裝前端依賴，以及完整重新安裝功能。
 """
 import os
 import sys
@@ -317,13 +317,13 @@ def install_python_deps(
 
 def install_frontend_deps(on_output: Callable[[str], None] | None = None) -> bool:
     """
-    安裝前端依賴 (npm install)。
+    安裝前端依賴；有 lockfile 時使用可重現的 ``npm ci``。
 
     Returns:
         bool: 是否成功
     """
     if not check_internet():
-        msg = "⚠️ 無網路連線，跳過 npm install"
+        msg = "⚠️ 無網路連線，跳過前端依賴安裝"
         if on_output:
             on_output(msg)
         logger.warning(msg)
@@ -336,14 +336,15 @@ def install_frontend_deps(on_output: Callable[[str], None] | None = None) -> boo
             on_output(msg)
         return False
 
-    if on_output:
-        on_output("📦 正在安裝前端依賴 (npm install)...")
-
     # 尋找 npm
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+    install_command = "ci" if (frontend_dir / "package-lock.json").is_file() else "install"
+
+    if on_output:
+        on_output(f"📦 正在安裝前端依賴 (npm {install_command})...")
 
     success, _ = _run_command(
-        [npm_cmd, "install"],
+        [npm_cmd, install_command],
         on_output=on_output,
         cwd=frontend_dir,
     )
