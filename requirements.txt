@@ -43,7 +43,7 @@ pydantic[email]
 # OCR（官方 SDK + HF-native Transformers 推論 + PDF）
 -r requirements-ocr.txt
 PyMuPDF
-requests>=2.32.0
+requests>=2.34.2
 
 # 以圖搜頁 (CLIP)
 Pillow
