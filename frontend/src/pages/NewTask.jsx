@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 import { useModels } from '../context/ModelContext.jsx'
+import MediaRangePlayer from '../components/MediaRangePlayer.jsx'
 
 export default function NewTask() {
     const { findModelKey } = useModels()
@@ -16,6 +17,7 @@ export default function NewTask() {
     const [submitting, setSubmitting] = useState(false)
     const [dragOver, setDragOver] = useState(false)
     const [error, setError] = useState('')
+    const [mediaRange, setMediaRange] = useState({ start: 0, end: null, duration: null })
     const fileInputRef = useRef(null)
     const navigate = useNavigate()
 
@@ -50,7 +52,13 @@ export default function NewTask() {
         e.preventDefault()
         setDragOver(false)
         const droppedFile = e.dataTransfer.files[0]
-        if (droppedFile) setFile(droppedFile)
+        if (droppedFile) selectFile(droppedFile)
+    }
+
+    const selectFile = (nextFile) => {
+        setFile(nextFile || null)
+        setMediaRange({ start: 0, end: null, duration: null })
+        setError('')
     }
 
     const handleSubmit = async () => {
@@ -72,6 +80,14 @@ export default function NewTask() {
             formData.append('language', language)
             formData.append('enable_diarization', diarization)
             formData.append('to_traditional', traditional)
+            const hasCustomRange = mediaRange.duration && (
+                mediaRange.start > 0.01
+                || mediaRange.end < mediaRange.duration - 0.01
+            )
+            if (hasCustomRange) {
+                formData.append('start_time', mediaRange.start.toFixed(3))
+                formData.append('end_time', mediaRange.end.toFixed(3))
+            }
 
             const res = await fetchWithAuth('/api/tasks', {
                 method: 'POST',
@@ -138,7 +154,7 @@ export default function NewTask() {
                         ref={fileInputRef}
                         style={{ display: 'none' }}
                         accept=".mp3,.wav,.m4a,.flac,.ogg,.wma,.aac,.mp4"
-                        onChange={(e) => setFile(e.target.files[0])}
+                        onChange={(e) => selectFile(e.target.files[0])}
                     />
                     {file ? (
                         <>
@@ -159,6 +175,28 @@ export default function NewTask() {
                     )}
                 </div>
             </div>
+
+            {file && (
+                <div className="card media-selection-card" style={{ marginBottom: 'var(--space-lg)' }}>
+                    <div className="media-selection-header">
+                        <div>
+                            <h3>🎧 試聽與辨識範圍</h3>
+                            <p>拖曳波形上的左右界線或下方滑桿，指定這次要辨識的片段。</p>
+                        </div>
+                        {mediaRange.duration && (
+                            <span className="media-selection-badge">
+                                {mediaRange.start <= 0.01 && mediaRange.end >= mediaRange.duration - 0.01 ? '完整音訊' : '自訂片段'}
+                            </span>
+                        )}
+                    </div>
+                    <MediaRangePlayer
+                        key={`${file.name}:${file.size}:${file.lastModified}`}
+                        file={file}
+                        range={mediaRange}
+                        onRangeChange={setMediaRange}
+                    />
+                </div>
+            )}
 
             {error && <div className="alert alert-error" role="alert">{error}</div>}
 

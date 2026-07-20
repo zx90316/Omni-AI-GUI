@@ -1057,6 +1057,8 @@ class ASREngine:
         language: Optional[str] = "Chinese",
         enable_diarization: bool = True,
         to_traditional: bool = True,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         完整 ASR 流程：轉檔 → 分段轉錄 → 語者分離 → 合併
@@ -1066,6 +1068,8 @@ class ASREngine:
             language: 語言
             enable_diarization: 是否啟用語者分離
             to_traditional: 是否轉為繁體中文
+            start_time: 選取片段開頭秒數；未指定時從媒體開頭辨識
+            end_time: 選取片段結尾秒數；未指定時辨識至媒體結尾
 
         Returns:
             {
@@ -1110,6 +1114,8 @@ class ASREngine:
                     convert_to_wav(
                         str(input_path),
                         str(wav_path),
+                        start_time=start_time,
+                        end_time=end_time,
                         should_cancel=lambda: self._interruption_reason() is not None,
                     )
                 except InterruptedError as exc:

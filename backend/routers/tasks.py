@@ -5,6 +5,7 @@
 import asyncio
 import io
 import logging
+import math
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -93,6 +94,8 @@ async def create_task(
     language: str = Form(DEFAULT_LANGUAGE),
     enable_diarization: bool = Form(True),
     to_traditional: bool = Form(True),
+    start_time: Optional[float] = Form(None),
+    end_time: Optional[float] = Form(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -102,6 +105,13 @@ async def create_task(
         raise HTTPException(status_code=400, detail=f"不支援的模型: {model}")
     if language not in LANGUAGES:
         raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
+
+    if start_time is not None and (not math.isfinite(start_time) or start_time < 0):
+        raise HTTPException(status_code=400, detail="片段開頭不可小於 0 秒")
+    if end_time is not None and (not math.isfinite(end_time) or end_time <= 0):
+        raise HTTPException(status_code=400, detail="片段結尾必須大於 0 秒")
+    if start_time is not None and end_time is not None and end_time <= start_time:
+        raise HTTPException(status_code=400, detail="片段結尾必須晚於片段開頭")
 
     require_asr_models(MODELS[model], diarization=enable_diarization)
 
@@ -146,9 +156,16 @@ async def create_task(
     get_or_create_cancel_event(task_id)
     _progress_store[task_id] = {"percent": 0, "message": "等待中", "done": False}
     try:
-        _start_asr_thread(
-            (task_id, audio_path, model, language, enable_diarization, to_traditional)
-        )
+        _start_asr_thread((
+            task_id,
+            audio_path,
+            model,
+            language,
+            enable_diarization,
+            to_traditional,
+            start_time,
+            end_time,
+        ))
     except Exception as exc:
         clear_cancel_event(task_id)
         task.status = "failed"
@@ -577,7 +594,8 @@ def remove_punctuation(
 # ============================================
 
 def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
-                  enable_diarization: bool, to_traditional: bool):
+                  enable_diarization: bool, to_traditional: bool,
+                  start_time: Optional[float] = None, end_time: Optional[float] = None):
     """在背景執行 ASR 任務"""
     from backend.database import SessionLocal
 
@@ -624,6 +642,8 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
             language=lang_code,
             enable_diarization=enable_diarization,
             to_traditional=to_traditional,
+            start_time=start_time,
+            end_time=end_time,
         )
         if cancel_event.is_set():
             raise ASRCancelledError("ASR 任務已取消（結果寫入前）")

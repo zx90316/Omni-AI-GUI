@@ -26,3 +26,4 @@ _internal/
 .manager/
 .python-runtime/
 .python-*-embed-amd64.zip
+uploads/

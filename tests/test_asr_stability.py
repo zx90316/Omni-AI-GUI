@@ -52,6 +52,42 @@ class ASRStabilityTests(unittest.TestCase):
 
         engine._progress(25, "轉錄中")
 
+    def test_selected_range_is_passed_to_audio_conversion(self):
+        observed = {}
+        engine = self.make_engine()
+
+        with tempfile.TemporaryDirectory() as result_root:
+            audio_module = types.ModuleType("backend.audio_utils")
+
+            def convert_to_wav(
+                input_path,
+                output_path,
+                start_time=None,
+                end_time=None,
+                should_cancel=None,
+            ):
+                observed.update(start_time=start_time, end_time=end_time)
+                Path(output_path).write_bytes(b"fake wav")
+                return output_path
+
+            audio_module.convert_to_wav = convert_to_wav
+            config_module = types.ModuleType("backend.config")
+            config_module.RESULT_DIR = Path(result_root)
+
+            with patch.dict(
+                sys.modules,
+                {"backend.audio_utils": audio_module, "backend.config": config_module},
+            ):
+                engine.run(
+                    "input.mp3",
+                    enable_diarization=False,
+                    to_traditional=False,
+                    start_time=12.5,
+                    end_time=47.25,
+                )
+
+        self.assertEqual(observed, {"start_time": 12.5, "end_time": 47.25})
+
     def test_transcribe_retries_once_then_succeeds(self):
         engine = self.make_engine()
         calls = []
@@ -224,7 +260,13 @@ class ASRStabilityTests(unittest.TestCase):
 
             audio_module = types.ModuleType("backend.audio_utils")
 
-            def convert_to_wav(input_path, output_path, should_cancel=None):
+            def convert_to_wav(
+                input_path,
+                output_path,
+                start_time=None,
+                end_time=None,
+                should_cancel=None,
+            ):
                 output = Path(output_path)
                 output.write_bytes(b"fake wav")
                 converted_paths.append(output)

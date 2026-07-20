@@ -115,11 +115,16 @@ def open_env_editor(parent_window, on_saved=None):
             save_button.configure(state=DISABLED)
 
     for group_name, fields in grouped.items():
-        group_frame = ttk.LabelFrame(scrollable, text=f"  {group_name}  ", padding=12)
+        # ttkbootstrap may expose tkinter.LabelFrame on newer Python/Tk builds.
+        # That widget does not accept ttk's ``padding`` option, so keep the
+        # spacing on a child frame instead.
+        group_frame = ttk.LabelFrame(scrollable, text=f"  {group_name}  ")
         group_frame.pack(fill=X, pady=(0, 12))
+        group_content = ttk.Frame(group_frame, padding=12)
+        group_content.pack(fill=X)
 
         for field in fields:
-            row = ttk.Frame(group_frame)
+            row = ttk.Frame(group_content)
             row.pack(fill=X, pady=(0, 12))
 
             label_text = f"{field.label}{' *' if field.required else ''}"

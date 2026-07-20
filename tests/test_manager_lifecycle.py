@@ -1,6 +1,7 @@
 """Fast lifecycle tests for Manager configuration and process supervision."""
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ from manager.env_schema import (
     validate_env_file,
     validate_env_values,
 )
+from manager import env_editor
 from launch import get_project_override, is_project_directory
 from manager import git_manager
 
@@ -59,6 +61,14 @@ class ConfigLifecycleTests(unittest.TestCase):
 
 
 class EnvConfigurationTests(unittest.TestCase):
+    def test_env_group_uses_child_frame_for_padding(self):
+        source = Path(env_editor.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(
+            'ttk.LabelFrame(scrollable, text=f"  {group_name}  ", padding=',
+            source,
+        )
+        self.assertIn("ttk.Frame(group_frame, padding=12)", source)
+
     def test_empty_fields_receive_safe_form_defaults_and_generated_secret(self):
         values = initial_env_values({})
         self.assertEqual(values["OCR_PROVIDER"], "local")
@@ -170,6 +180,47 @@ class ManagedProcessLifecycleTests(unittest.TestCase):
         ):
             flags = _service_creation_flags()
         self.assertTrue(flags & 0x08000000)
+
+    def test_windows_stop_terminates_complete_process_tree(self):
+        from manager import process_manager
+
+        class FakeProcess:
+            pid = 4321
+            returncode = None
+            killed = False
+
+            @staticmethod
+            def poll():
+                return None
+
+            @staticmethod
+            def wait(timeout=None):
+                del timeout
+                return 0
+
+            def kill(self):
+                self.killed = True
+
+        managed = ManagedProcess("frontend", ["npm.cmd", "run", "dev"], Path.cwd())
+        process = FakeProcess()
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with (
+            patch.object(process_manager.os, "name", "nt"),
+            patch.object(process_manager.subprocess, "run", return_value=completed) as run,
+        ):
+            managed._terminate_process(process)
+
+        self.assertEqual(
+            run.call_args.args[0],
+            ["taskkill", "/F", "/T", "/PID", "4321"],
+        )
+        self.assertFalse(process.killed)
+
+    def test_vite_uses_configured_port_without_automatic_fallback(self):
+        config = (
+            Path(__file__).resolve().parents[1] / "frontend" / "vite.config.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("strictPort: true", config)
 
     def test_incomplete_env_blocks_service_before_process_checks(self):
         manager = ProcessManager.__new__(ProcessManager)

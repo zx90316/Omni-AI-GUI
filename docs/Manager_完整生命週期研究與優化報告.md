@@ -68,7 +68,8 @@ flowchart TD
 - 本次新增「期望運行」狀態，將使用者意圖與 PID/畫面狀態分離。程序異常退出後仍可由 supervisor 判斷應否重啟；手動停止則不再被誤重啟。
 - 啟停操作已序列化，避免快速重複點擊產生兩個相同服務。
 - 連續重啟達上限後會停止監督該程序，而不是每個週期重複報錯。
-- 終止時先對新程序群組發送可處理的終止訊號，超時才強制終止程序樹。
+- Windows 終止時直接以仍存活的 npm/uvicorn 根 PID 執行 `taskkill /F /T`，確保 Node/Vite 等子程序不會在父程序先退出後成為孤兒；其他平台先優雅終止，超時才強制終止。
+- Vite 啟用 `strictPort`，指定埠被占用時會明確啟動失敗，不再靜默改用 5175、5176 而讓 Manager 的健康端點與實際服務錯位。
 
 ### 5. 設定生命週期
 
@@ -148,6 +149,7 @@ Hugging Face 官方說明指出，Hub cache 由 `refs`、`blobs`、`snapshots` �
 | P1 | 儲存設定後命令仍是舊值 | 需要重開 Manager 才能換 port/host | 已完成，熱重載命令 |
 | P1 | 設定直接覆寫 JSON 且缺乏驗證 | 中斷或非法值會破壞下次啟動 | 已完成，驗證與原子寫入 |
 | P1 | `Popen` 成功即顯示 Running | 服務可能仍在啟動或已無法 HTTP 回應 | 已完成，HTTP readiness |
+| P1 | Windows 只終止 npm 父程序 | Node/Vite 子程序殘留並持續占用 5174、5175、5176 | 已完成，原子終止完整程序樹並啟用 Vite strictPort |
 | P1 | 打包版首次部署執行 `git reset --hard` | 目錄內既有檔案可能被覆蓋 | 已完成，全新目錄 shallow clone |
 | P2 | 模型下載只有串流文字 | 無總位元組百分比、階段與取消 | 已完成，JSONL 事件與取消 |
 | P2 | 健康監控只看 PID | deadlock 或 HTTP 掛起無法發現 | 已完成，連續失敗門檻與 `/health/*` |
@@ -161,10 +163,13 @@ Hugging Face 官方說明指出，Hub cache 由 `refs`、`blobs`、`snapshots` �
 - Manager headless 測試使用臨時 HTTP server 驗證 wildcard URL、readiness 成功、readiness timeout、持久化日誌、接管與停止契約、命令白名單、設定原子存取、dirty worktree 阻擋更新。
 - 模型測試涵蓋 Hugging Face 的 missing/ready/partial/config-only/broken-ref、cache 優先序、layout checkpoint 派送、registry 唯一性、JSONL event parser、取消控制器與損壞 `.venv` 阻擋下載。
 - Python 語法編譯通過。
-- Frontend production build 通過（Vite 6.4.3，59 modules）。
+- Frontend production build 通過（Vite 6.4.3，58 modules）。
 - Windows 預設 CP950 下，既有的 `test_merge.py`、`test_split.py` 會在 import 階段直接輸出 emoji，須用 `python -X utf8 -m unittest discover ...`；這是測試啟動環境限制，不是產品程式失敗。
-- 目前專案 `.venv` 可正常執行；已用 Manager worker 實際下載並完成 `PaddlePaddle/PP-DocLayoutV3_safetensors` 的 `local_files_only` 驗證，快取 revision 為 `97d101e6db2642e162a1d05392d1b0231c91033e`。
+- 較早的模型驗證階段在 `.venv` 尚可執行時，已用 Manager worker 實際下載並完成 `PaddlePaddle/PP-DocLayoutV3_safetensors` 的 `local_files_only` 驗證，快取 revision 為 `97d101e6db2642e162a1d05392d1b0231c91033e`。
 - 下載後在 `HF_HUB_OFFLINE=1` 與 `TRANSFORMERS_OFFLINE=1` 下，`glmocr` 成功把模型載入為 `PPDocLayoutV3ForObjectDetection` 並配置到 `cuda:0`，確認快取可被實際 runtime 使用。
+- Windows 前端實機 smoke test：Vite 在 5174 啟動後由 Manager 停止，連線結果為 `10061`（拒絕連線），確認埠已釋放；另以暫時服務占用 5174，Vite 明確回傳 `Port 5174 is already in use` 並以 code 1 結束，未改用 5175。
+- 最新 Manager lifecycle 測試以獨立 runtime 執行 25 項：24 通過、1 項因該 runtime 未安裝 FastAPI 而跳過；程序樹、strictPort 與語法編譯均通過。
+- 目前 `.venv` 的基礎 `Python312` 已被移除，因此 `.venv` 暫時不可執行；本輪改用工作區獨立 Python 驗證，不對既有 `.venv` 做破壞性重建。
 
 ## 後續維護原則
 

@@ -433,9 +433,35 @@ class ManagedProcess:
         return False
 
     def _terminate_process(self, process: subprocess.Popen, timeout: int = 10):
-        """Attempt graceful process-group shutdown, then force the tree if needed."""
+        """Terminate the full Windows tree; gracefully stop elsewhere before killing."""
         if process.poll() is not None:
             return
+
+        # npm.cmd is only the launcher on Windows.  Terminating that parent
+        # first leaves node/vite running as an orphan, so taskkill must receive
+        # the still-live root PID and terminate the complete tree atomically.
+        if os.name == "nt":
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                text=True,
+                encoding="mbcs",
+                errors="replace",
+                timeout=max(5, timeout),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            try:
+                process.wait(timeout=min(timeout, 5))
+            except (OSError, subprocess.TimeoutExpired):
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+            if result.returncode not in (0, 128) and process.poll() is None:
+                raise RuntimeError(
+                    result.stderr.strip() or f"taskkill 結束碼 {result.returncode}"
+                )
+            return
+
         try:
             process.terminate()
             process.wait(timeout=timeout)
@@ -443,14 +469,7 @@ class ManagedProcess:
         except (OSError, subprocess.TimeoutExpired):
             self._emit_output(f"⚠️ {self.name} 未回應，強制終止中...")
 
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        else:
-            process.kill()
+        process.kill()
         process.wait(timeout=5)
 
     def _read_output(self, process: subprocess.Popen):

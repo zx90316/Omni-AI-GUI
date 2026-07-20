@@ -3,12 +3,14 @@
 音訊處理工具模組
 處理音訊格式轉換、載入等功能
 """
-import torch
-import torchaudio
-import soundfile as sf
-import av
+from fractions import Fraction
 from pathlib import Path
 from typing import Callable, Tuple, Optional
+
+import av
+import soundfile as sf
+import torch
+import torchaudio
 
 from backend.config import AUDIO_SAMPLE_RATE
 
@@ -99,7 +101,66 @@ def convert_to_wav(
                 layout='mono'
             )
 
-            current_time = start_time if start_time is not None else 0.0
+            selection_start = max(0.0, start_time or 0.0)
+            selected_sample_count = (
+                max(0, round((end_time - selection_start) * AUDIO_SAMPLE_RATE))
+                if end_time is not None
+                else None
+            )
+            written_samples = 0
+            current_time = selection_start
+
+            def encode_resampled_frame(resampled_frame, time_hint: float) -> bool:
+                """Encode one frame and report when the selected range is complete."""
+                nonlocal written_samples
+
+                # Keep the original zero-copy path for full-file conversion.
+                if start_time is None and end_time is None:
+                    for packet in output_stream.encode(resampled_frame):
+                        output_container.mux(packet)
+                    return False
+
+                frame_start = (
+                    float(resampled_frame.pts * resampled_frame.time_base)
+                    if resampled_frame.pts is not None
+                    else time_hint
+                )
+                frame_end = frame_start + (resampled_frame.samples / AUDIO_SAMPLE_RATE)
+                if frame_end <= selection_start:
+                    return False
+
+                start_offset = max(
+                    0,
+                    min(
+                        resampled_frame.samples,
+                        round((selection_start - frame_start) * AUDIO_SAMPLE_RATE),
+                    ),
+                )
+                available_samples = resampled_frame.samples - start_offset
+                if selected_sample_count is not None:
+                    remaining_samples = selected_sample_count - written_samples
+                    if remaining_samples <= 0:
+                        return True
+                    available_samples = min(available_samples, remaining_samples)
+
+                if available_samples <= 0:
+                    return selected_sample_count is not None and written_samples >= selected_sample_count
+
+                samples = resampled_frame.to_ndarray()
+                clipped = av.AudioFrame.from_ndarray(
+                    samples[:, start_offset:start_offset + available_samples].copy(),
+                    format='s16',
+                    layout='mono',
+                )
+                clipped.sample_rate = AUDIO_SAMPLE_RATE
+                clipped.pts = written_samples
+                clipped.time_base = Fraction(1, AUDIO_SAMPLE_RATE)
+                for packet in output_stream.encode(clipped):
+                    output_container.mux(packet)
+                written_samples += available_samples
+                return selected_sample_count is not None and written_samples >= selected_sample_count
+
+            selection_complete = False
 
             for frame in input_container.decode(input_stream):
                 if should_cancel is not None and should_cancel():
@@ -112,15 +173,19 @@ def convert_to_wav(
                 resampled_frames = resampler.resample(frame)
 
                 for resampled_frame in resampled_frames:
-                    for packet in output_stream.encode(resampled_frame):
-                        output_container.mux(packet)
+                    if encode_resampled_frame(resampled_frame, frame_time):
+                        selection_complete = True
+                        break
 
                 current_time = frame_time
+                if selection_complete:
+                    break
 
             # 將 resampler 內部尚未輸出的尾端樣本送入 encoder，避免音訊被截短。
-            for resampled_frame in resampler.resample(None):
-                for packet in output_stream.encode(resampled_frame):
-                    output_container.mux(packet)
+            if not selection_complete:
+                for resampled_frame in resampler.resample(None):
+                    if encode_resampled_frame(resampled_frame, current_time):
+                        break
 
             for packet in output_stream.encode():
                 output_container.mux(packet)

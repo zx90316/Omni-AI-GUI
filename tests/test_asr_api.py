@@ -107,6 +107,50 @@ class ASRApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(list(self.upload_dir.iterdir()), [])
 
+    def test_selected_time_range_is_forwarded_to_background_task(self):
+        with patch.object(tasks_router, "_start_asr_thread") as start_thread:
+            response = self.client.post(
+                "/api/tasks",
+                files={"file": ("sample.wav", b"RIFF-fake-audio", "audio/wav")},
+                data={"start_time": "12.5", "end_time": "47.25"},
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        args = start_thread.call_args.args[0]
+        self.assertEqual(args[-2:], (12.5, 47.25))
+
+    def test_audio_conversion_trims_selected_range_to_sample_precision(self):
+        from backend.audio_utils import convert_to_wav
+
+        sample_rate = 16000
+        source = self.upload_dir / "source.wav"
+        selected = self.upload_dir / "selected.wav"
+        samples = np.linspace(-0.5, 0.5, sample_rate * 5, dtype=np.float32)
+        sf.write(source, samples, sample_rate)
+
+        convert_to_wav(
+            str(source),
+            str(selected),
+            start_time=1.25,
+            end_time=3.75,
+        )
+
+        selected_samples, _ = sf.read(selected, dtype="float32")
+        source_samples, _ = sf.read(source, dtype="float32")
+        expected = source_samples[round(1.25 * sample_rate):round(3.75 * sample_rate)]
+        self.assertAlmostEqual(sf.info(selected).duration, 2.5, places=3)
+        np.testing.assert_allclose(selected_samples, expected, atol=1 / 32768)
+
+    def test_rejects_invalid_time_range_before_saving_upload(self):
+        response = self.client.post(
+            "/api/tasks",
+            files={"file": ("sample.wav", b"RIFF-fake-audio", "audio/wav")},
+            data={"start_time": "30", "end_time": "10"},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(list(self.upload_dir.iterdir()), [])
+
     def test_cancel_is_idempotent_and_active_task_cannot_be_deleted(self):
         task = self.create_valid_task()
         first = self.client.post(f"/api/tasks/{task['id']}/cancel")

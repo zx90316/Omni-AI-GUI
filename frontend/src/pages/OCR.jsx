@@ -26,7 +26,7 @@ const TASKS = [
 ]
 
 const PROVIDERS = [
-    { id: 'local', label: '專案內本機推論', hint: 'Transformers，不需要 Ollama' },
+    { id: 'local', label: '專案內本機推論', hint: 'Transformers' },
     { id: 'openai', label: 'vLLM / SGLang', hint: 'OpenAI 相容服務，適合正式環境' },
     { id: 'ollama', label: 'Ollama（相容）', hint: '保留舊環境使用，非必要依賴' },
 ]

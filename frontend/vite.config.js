@@ -6,6 +6,7 @@ export default defineConfig({
     server: {
         host: process.env.HOST || true, // Listen on all local IPs or specify host
         port: parseInt(process.env.PORT) || 5173,
+        strictPort: true,
         proxy: {
             '/api': {
                 target: `http://${process.env.BACKEND_HOST || 'localhost'}:${process.env.BACKEND_PORT || 8000}`,
