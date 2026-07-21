@@ -29,6 +29,7 @@
 - 上傳媒體片段選取的驗證、傳遞與轉檔契約。
 - Manager executable 會自動找到同目錄下 clone 的 `Omni-AI-GUI/`，並記住上次有效的專案位置，避免重新啟動時重複詢問下載。
 - Release 建置偵測到輸出目錄內已有安裝專案時會拒絕清理，避免重建誤刪使用者 clone。
+- GitHub Release workflow 改用 PowerShell hashtable splatting，正確傳遞 Nuitka 版本、簽章與 skip-install 參數。
 
 ### Security
 

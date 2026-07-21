@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReleasePackagingTests(unittest.TestCase):
     def test_source_version_is_semantic(self):
         self.assertRegex(__version__, r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+        frontend_package = json.loads(
+            (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(frontend_package["version"], __version__)
 
     def test_release_manifest_sources_are_present(self):
         manifest = json.loads(
@@ -42,6 +46,8 @@ class ReleasePackagingTests(unittest.TestCase):
         text = workflow.read_text(encoding="utf-8")
         self.assertIn("scripts/build_nuitka.ps1", text)
         self.assertIn("actions/attest@", text)
+        self.assertIn("$buildParameters = @{", text)
+        self.assertIn("@buildParameters", text)
 
     def test_release_does_not_copy_backend_or_frontend(self):
         manifest = json.loads(

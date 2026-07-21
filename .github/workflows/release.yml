@@ -110,17 +110,14 @@ jobs:
       - name: Build verified Nuitka release
         shell: pwsh
         run: |
-          $arguments = @(
-            "-ReleaseVersion", "${{ steps.version.outputs.version }}",
-            "-SkipInstall"
-          )
-          if ("${{ steps.certificate.outputs.thumbprint }}") {
-            $arguments += @(
-              "-CertThumbprint",
-              "${{ steps.certificate.outputs.thumbprint }}"
-            )
+          $buildParameters = @{
+            ReleaseVersion = "${{ steps.version.outputs.version }}"
+            SkipInstall = $true
           }
-          ./scripts/build_nuitka.ps1 @arguments
+          if ("${{ steps.certificate.outputs.thumbprint }}") {
+            $buildParameters.CertThumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          }
+          ./scripts/build_nuitka.ps1 @buildParameters
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
