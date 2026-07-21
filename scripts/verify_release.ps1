@@ -12,6 +12,34 @@ $Manifest = Get-Content -LiteralPath (Join-Path $Root "packaging\release-manifes
     -Raw -Encoding UTF8 | ConvertFrom-Json
 
 $errors = [Collections.Generic.List[string]]::new()
+
+function Read-SelfTestResult {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+    try {
+        return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        $errors.Add("$Label wrote invalid JSON: $($_.Exception.Message)")
+        return $null
+    }
+}
+
+function Format-SelfTestDetails {
+    param($Result)
+    if ($null -eq $Result -or $null -eq $Result.missing) {
+        return ""
+    }
+    $details = @($Result.missing) |
+        ForEach-Object { "$($_)".Trim() } |
+        Where-Object { $_ }
+    if ($details.Count -eq 0) { return "" }
+    return ": $($details -join '; ')"
+}
 foreach ($relative in $Manifest.required_paths) {
     if (-not (Test-Path -LiteralPath (Join-Path $ResolvedRelease $relative))) {
         $errors.Add("Missing required release path: $relative")
@@ -62,15 +90,22 @@ if ($errors.Count -eq 0) {
         if (-not $process.WaitForExit(30000)) {
             $process.Kill()
             $errors.Add("Executable self-test timed out after 30 seconds.")
-        } elseif ($process.ExitCode -ne 0) {
-            $errors.Add("Executable self-test failed with exit code $($process.ExitCode).")
-        } elseif (-not (Test-Path -LiteralPath $selfTestOutput)) {
-            $errors.Add("Executable self-test did not write its result.")
         } else {
-            $result = Get-Content -LiteralPath $selfTestOutput -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($result.status -ne "ok") { $errors.Add("Executable reported an incomplete installation.") }
-            if ($result.version -ne $ExpectedVersion) {
-                $errors.Add("Executable version '$($result.version)' does not match '$ExpectedVersion'.")
+            $result = Read-SelfTestResult -Path $selfTestOutput -Label "Executable self-test"
+            if ($null -eq $result) {
+                if (-not (Test-Path -LiteralPath $selfTestOutput)) {
+                    $errors.Add("Executable self-test did not write its result (exit code $($process.ExitCode)).")
+                }
+            } else {
+                $details = Format-SelfTestDetails -Result $result
+                if ($process.ExitCode -ne 0) {
+                    $errors.Add("Executable self-test failed with exit code $($process.ExitCode)$details.")
+                } elseif ($result.status -ne "ok") {
+                    $errors.Add("Executable reported an incomplete installation$details.")
+                }
+                if ($result.version -ne $ExpectedVersion) {
+                    $errors.Add("Executable version '$($result.version)' does not match '$ExpectedVersion'.")
+                }
             }
         }
     } finally {
@@ -94,17 +129,22 @@ if ($errors.Count -eq 0) {
         if (-not $process.WaitForExit(30000)) {
             $process.Kill()
             $errors.Add("External project import test timed out after 30 seconds.")
-        } elseif ($process.ExitCode -ne 0) {
-            $errors.Add("External project import test failed with exit code $($process.ExitCode).")
-        } elseif (-not (Test-Path -LiteralPath $projectTestOutput)) {
-            $errors.Add("External project import test did not write its result.")
         } else {
-            $result = Get-Content -LiteralPath $projectTestOutput -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($result.status -ne "ok") {
-                $errors.Add("Manager could not import the external Backend project support modules.")
-            }
-            if ($result.version -ne $ExpectedVersion) {
-                $errors.Add("External project test reported version '$($result.version)'.")
+            $result = Read-SelfTestResult -Path $projectTestOutput -Label "External project import test"
+            if ($null -eq $result) {
+                if (-not (Test-Path -LiteralPath $projectTestOutput)) {
+                    $errors.Add("External project import test did not write its result (exit code $($process.ExitCode)).")
+                }
+            } else {
+                $details = Format-SelfTestDetails -Result $result
+                if ($process.ExitCode -ne 0) {
+                    $errors.Add("External project import test failed with exit code $($process.ExitCode)$details.")
+                } elseif ($result.status -ne "ok") {
+                    $errors.Add("Manager could not import the external Backend project support modules$details.")
+                }
+                if ($result.version -ne $ExpectedVersion) {
+                    $errors.Add("External project test reported version '$($result.version)'.")
+                }
             }
         }
     } finally {

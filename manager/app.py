@@ -28,7 +28,7 @@ except ImportError:
     print("  缺少 ttkbootstrap 套件，正在安裝...")
     print("=" * 60)
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "ttkbootstrap>=1.10.0"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "ttkbootstrap>=1.10.0,<2"])
     import ttkbootstrap as ttk
     from ttkbootstrap.constants import *
     from ttkbootstrap.scrolled import ScrolledText

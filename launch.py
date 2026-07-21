@@ -417,7 +417,7 @@ def auto_clone_setup():
 def ensure_dependencies():
     """確保管理 GUI 的依賴已安裝"""
     deps = {
-        "ttkbootstrap": "ttkbootstrap>=1.10.0",
+        "ttkbootstrap": "ttkbootstrap>=1.10.0,<2",
         "dotenv": "python-dotenv",
         "psutil": "psutil>=5.9",
     }

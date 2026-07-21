@@ -51,4 +51,4 @@ Pillow
 # Semantic (Embedding & Reranking)
 FlagEmbedding 
 
-ttkbootstrap
+ttkbootstrap>=1.10.0,<2

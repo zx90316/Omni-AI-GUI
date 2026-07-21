@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Manager 鎖定相容的 ttkbootstrap 1.x，避免乾淨 CI 環境安裝 2.x 後造成 Nuitka 外部專案匯入驗證失敗。
 - Windows 停止 Frontend 時會終止完整 npm/node/Vite process tree。
 - Manager 環境設定群組在不同 Tk/ttkbootstrap widget 實作下的 padding 相容性。
 - OCR 單元測試不再受開發機 `OCR_DEVICE` 影響。

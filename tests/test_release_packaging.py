@@ -49,6 +49,14 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("$buildParameters = @{", text)
         self.assertIn("@buildParameters", text)
 
+    def test_manager_gui_dependency_stays_on_compatible_major_version(self):
+        manager_requirements = (ROOT / "manager" / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+        project_requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("ttkbootstrap>=1.10.0,<2", manager_requirements)
+        self.assertIn("ttkbootstrap>=1.10.0,<2", project_requirements)
+
     def test_release_does_not_copy_backend_or_frontend(self):
         manifest = json.loads(
             (ROOT / "packaging" / "release-manifest.json").read_text(encoding="utf-8")

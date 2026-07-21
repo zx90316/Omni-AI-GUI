@@ -1,5 +1,5 @@
 # Omni AI Manager 依賴
 # 管理面板自身需要的套件（與主專案 requirements.txt 分開）
-ttkbootstrap>=1.10.0
+ttkbootstrap>=1.10.0,<2
 python-dotenv>=1.0.0
 psutil>=5.9

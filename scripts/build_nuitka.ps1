@@ -23,12 +23,17 @@
 
 .PARAMETER OutputDirectory
   Optional output directory under the repository. The default is release/.
+
+.PARAMETER PythonExecutable
+  Optional Python executable used for dependency installation and Nuitka. This
+  is useful for reproducing CI with an isolated environment.
 #>
 param(
     [string]$ReleaseVersion = "",
     [string]$CertThumbprint = "",
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [string]$OutputDirectory = "",
+    [string]$PythonExecutable = "",
     [switch]$SkipInstall,
     [switch]$SkipZip
 )
@@ -65,7 +70,18 @@ function Find-SdkTool {
 }
 
 $VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
-if (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
+if ($PythonExecutable) {
+    $PythonCandidate = if ([IO.Path]::IsPathRooted($PythonExecutable)) {
+        $PythonExecutable
+    } else {
+        Join-Path $Root $PythonExecutable
+    }
+    if (-not (Test-Path -LiteralPath $PythonCandidate -PathType Leaf)) {
+        throw "Python executable was not found: $PythonCandidate"
+    }
+    $Python = (Resolve-Path -LiteralPath $PythonCandidate).Path
+    Write-Host "Using explicit Python: $Python" -ForegroundColor DarkYellow
+} elseif (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
     $Python = $VenvPython
 } else {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
