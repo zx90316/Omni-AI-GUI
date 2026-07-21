@@ -22,7 +22,7 @@
 
 ### 取得與 bootstrap
 
-Source 模式由 `python launch.py` 啟動；PyInstaller 模式若不在完整 project tree，可讓使用者選擇位置並 shallow clone。外部 project root 必須同時含 Manager、Backend 與 Frontend 核心檔，避免在錯誤目錄執行。clone 在背景 thread 進行，不阻塞 Tk UI。
+Source 模式由 `python launch.py` 啟動；Nuitka standalone 發行包只包含 Manager。使用者可選擇位置並 shallow clone 完整 project tree；外部 project root 必須同時含 Manager、Backend 與 Frontend 核心檔，避免在錯誤目錄執行。clone 在背景 thread 進行，不阻塞 Tk UI。
 
 ### 環境安裝
 
@@ -53,8 +53,8 @@ Manager 結束完整 Windows process tree，Backend shutdown 清理 semantic wor
 | Frontend | `package-lock.json` 已存在 | Manager 改用 `npm ci`，CI 亦採 `npm ci` |
 | Models | 巨大且不適合 Git | registry + snapshot verification + local-only inference |
 | FFmpeg | Windows bundle 非 Git 資產 | Manager 管理，文件列明上游授權 |
-| Manager artifact | PyInstaller onedir | Release preflight、乾淨 commit、smoke-test checklist |
-| Version | API、npm、tag 尚有多來源 | 文件明列為後續單一版本來源工作 |
+| Manager artifact | Nuitka standalone Manager-only ZIP | Release allowlist、self-test、SHA-256、簽章接口與 provenance attestation |
+| Release version | `omni_version.py` 單一來源 | pyproject 動態讀取，tag／EXE／workflow 強制一致；API metadata 保留獨立版本 |
 
 ## 風險與優先級
 
@@ -96,7 +96,7 @@ Manager 結束完整 Windows process tree，Backend shutdown 清理 semantic wor
 
 執行環境原 `.venv` 的 launcher 綁定已移除的 Python 3.12，故測試使用同版可用 Python 搭配既有 site-packages；這正是文件要求「搬移／移除 base Python 後重建 venv」的實際案例。Frontend 初次在 sandbox 讀取 pnpm layout 遇到 EPERM，允許正常本機讀取後 build 通過，非原始碼錯誤。
 
-真實模型 CUDA、2 小時以上音訊、多人 diarization、YouTube 網路中斷重試、SMTP deliverability、PyInstaller clean-machine smoke test與公開網路滲透／負載測試不在本次執行範圍，發布前仍應依 [RELEASE.md](RELEASE.md) 驗收。
+真實模型 CUDA、2 小時以上音訊、多人 diarization、YouTube 網路中斷重試、SMTP deliverability、Nuitka clean-machine smoke test 與公開網路滲透／負載測試不在本次執行範圍，發布前仍應依 [RELEASE.md](RELEASE.md) 驗收。
 
 ## 後續路線圖
 

@@ -19,8 +19,8 @@ import sys
 project_root_override = os.environ.get("OMNI_AI_PROJECT_ROOT", "").strip()
 if project_root_override:
     PROJECT_ROOT = Path(project_root_override).expanduser().resolve()
-elif getattr(sys, 'frozen', False):
-    # 執行為 PyInstaller 打包的 .exe
+elif "__compiled__" in globals():
+    # 執行為 Nuitka standalone executable
     PROJECT_ROOT = Path(sys.executable).parent.resolve()
 else:
     # 正常 Python 腳本執行

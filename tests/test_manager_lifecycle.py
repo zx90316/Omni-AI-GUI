@@ -23,7 +23,13 @@ from manager.env_schema import (
     validate_env_values,
 )
 from manager import env_editor
-from launch import get_project_override, is_project_directory
+from launch import (
+    discover_project_root,
+    get_project_override,
+    is_project_directory,
+    load_saved_project_root,
+    save_project_root,
+)
 from manager import git_manager
 
 
@@ -114,6 +120,15 @@ class EnvConfigurationTests(unittest.TestCase):
 
 
 class BootstrapLifecycleTests(unittest.TestCase):
+    @staticmethod
+    def _make_project(root: Path) -> None:
+        (root / "manager").mkdir(parents=True)
+        (root / "manager" / "app.py").touch()
+        (root / "backend").mkdir()
+        (root / "backend" / "app.py").touch()
+        (root / "frontend").mkdir()
+        (root / "frontend" / "package.json").touch()
+
     def test_project_override_prefers_explicit_argument(self):
         resolved = get_project_override(
             ["--project-dir", "C:/explicit"],
@@ -132,6 +147,25 @@ class BootstrapLifecycleTests(unittest.TestCase):
             (root / "frontend").mkdir()
             (root / "frontend" / "package.json").touch()
             self.assertTrue(is_project_directory(root))
+
+    def test_project_discovery_finds_clone_beside_executable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            executable_dir = Path(temp_dir)
+            project_root = executable_dir / "Omni-AI-GUI"
+            self._make_project(project_root)
+            discovered = discover_project_root(executable_dir)
+        self.assertEqual(discovered, project_root.resolve())
+
+    def test_project_state_round_trip_and_stale_path_rejection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "project"
+            state_file = root / "state" / "bootstrap.json"
+            self._make_project(project_root)
+            self.assertTrue(save_project_root(project_root, state_file))
+            self.assertEqual(load_saved_project_root(state_file), project_root.resolve())
+            (project_root / "backend" / "app.py").unlink()
+            self.assertIsNone(load_saved_project_root(state_file))
 
     def test_bootstrap_source_contains_no_destructive_reset(self):
         source = (Path(__file__).resolve().parents[1] / "launch.py").read_text(encoding="utf-8")

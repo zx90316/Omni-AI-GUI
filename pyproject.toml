@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omni-ai-gui"
+dynamic = ["version"]
+description = "Windows-first local multimodal AI workspace and service manager"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "MIT" }
+authors = [
+  { name = "Omni-AI-GUI Contributors" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Win32 (MS Windows)",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/zx90316/Omni-AI-GUI"
+Issues = "https://github.com/zx90316/Omni-AI-GUI/issues"
+Changelog = "https://github.com/zx90316/Omni-AI-GUI/blob/master/CHANGELOG.md"
+
+[tool.setuptools]
+py-modules = ["omni_version"]
+
+[tool.setuptools.dynamic]
+version = { attr = "omni_version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

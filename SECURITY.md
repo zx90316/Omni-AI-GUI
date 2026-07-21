@@ -38,3 +38,16 @@
 - AI 產出可能不正確；涉及法律、醫療、財務、存取控制或不可逆決策時必須人工覆核。
 
 只有本儲存庫程式碼採 MIT；上游模型、FFmpeg、套件與輸入資料仍受各自條款約束。
+
+## Windows 發行包與企業防毒
+
+打包後的 Python GUI、會下載工具鏈或啟動子程序的管理器，可能被 EDR／防毒的信譽與行為式規則攔截。專案採取以下措施降低誤判面，但不保證任何特定產品零誤判：
+
+- 正式產物只使用 Nuitka `standalone` 資料夾發行，不提供 onefile 自解壓版本。
+- 不使用 UPX 或其他 executable packer，避免高熵殼與暫存目錄展開行為。
+- 嵌入產品／版本資訊與 `asInvoker` manifest，不要求系統管理員權限。
+- 建置腳本支援 Authenticode SHA-256 簽章與可信時間戳；公司部署應使用組織的 OV／EV code-signing certificate。
+- Release 同時發布 SHA-256，GitHub Actions 對 ZIP 建立 provenance attestation。
+- 發行內容由 allowlist manifest 組成，只包含 Manager standalone runtime 與必要聲明；Backend、Frontend、`.env`、資料庫、uploads、results、cache、虛擬環境與建置目錄都會被拒絕。
+
+公司部署前應先在隔離環境驗收，再由資安單位依簽章發行者核准；無簽章時可依每版 SHA-256 allowlist。若仍被判定為惡意程式，請向防毒廠商提交誤判樣本與 GitHub Release／雜湊證據，勿採停用防毒或廣泛排除目錄的方式繞過。

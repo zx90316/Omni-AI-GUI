@@ -1,0 +1,10 @@
+Omni AI Manager release notice
+==============================
+
+The project source is licensed under the MIT License. This Manager-only release
+contains Nuitka-produced runtime files and third-party Python packages used by Manager;
+their respective license files and package metadata remain authoritative.
+
+AI models, FFmpeg, Python packages installed after first launch, and npm packages
+are not relicensed by Omni-AI-GUI. Review each upstream license before corporate
+deployment or redistribution.

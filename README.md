@@ -132,6 +132,18 @@ Python 語法與離線單元測試：
 
 `tests/test_auth.py` 與 `tests/test_email.py` 是需要執行中 Backend／SMTP 的手動整合腳本，不屬於離線單元測試。測試分層與 GPU 驗收項目詳見 [開發指南](docs/DEVELOPMENT.md#測試策略)。
 
+Windows 發行包改用 Nuitka `standalone`，不再提供其他打包器路徑：
+
+```powershell
+# 建置 Manager、檢查完整性並產生 ZIP 與 SHA-256
+.\build.bat
+
+# 使用公司 Authenticode 憑證簽章
+.\scripts\build_nuitka.ps1 -CertThumbprint "<certificate SHA-1 thumbprint>"
+```
+
+產物位於 `release/`。ZIP 只包含 Nuitka standalone Manager 與其必要 runtime／授權文件，不包含 Backend、Frontend 或 AI runtime；Manager 會在使用者選定的位置 clone 完整專案，記住有效位置，再明確安裝依賴、模型與 FFmpeg。重新啟動時也會自動辨識 EXE 同目錄下的 `Omni-AI-GUI/`。預設不使用 onefile 自解壓、UPX 或其他加殼器，以降低企業防毒的啟發式誤判面，但新程式仍需組織簽章、信譽累積或資安 allowlist，無法承諾所有防毒產品零誤判。推送與 `omni_version.py` 相符的 `vMAJOR.MINOR.PATCH` tag 後，GitHub Actions 會自動建置並建立 Release。
+
 ## 專案結構
 
 ```text
@@ -142,7 +154,10 @@ tests/                   離線單元測試與手動整合腳本
 docs/                    架構、設定、開發、發布與研究報告
 .github/                 CI、Dependabot、Issue 與 PR templates
 launch.py                Manager 啟動／打包入口
-release.bat              Windows Manager 建置與 GitHub Release 腳本
+build.bat                Windows Nuitka standalone 本機建置入口
+release.bat              相容入口，轉交同一套 Nuitka 建置流程
+packaging/               Manifest、發行內容契約與第三方聲明
+scripts/                 Nuitka 建置與發行完整性驗證
 requirements*.txt        Runtime、OCR 與開發依賴
 manager_config.json      Manager 本機服務與監督設定
 ```

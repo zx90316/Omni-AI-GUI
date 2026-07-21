@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "directories": [],
+  "files": [
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "required_paths": [
+    "Omni-AI-Manager.exe",
+    "SECURITY.md",
+    "LICENSE",
+    "README_RELEASE.txt",
+    "THIRD_PARTY_NOTICES.txt"
+  ],
+  "excluded_names": [
+    ".env",
+    ".git",
+    ".manager",
+    ".python-runtime",
+    ".venv",
+    "__pycache__",
+    "backend",
+    "build",
+    "docs",
+    "dist",
+    "frontend",
+    "node_modules",
+    "release",
+    "results",
+    "tests",
+    "uploads"
+  ],
+  "excluded_extensions": [
+    ".db",
+    ".mp3",
+    ".py",
+    ".pyc",
+    ".wav"
+  ]
+}

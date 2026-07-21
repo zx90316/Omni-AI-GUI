@@ -1,0 +1,4 @@
+# Windows release tooling. Runtime AI dependencies are installed by Manager.
+nuitka>=4.1,<5
+ordered-set>=4.1,<5
+zstandard>=0.23,<1

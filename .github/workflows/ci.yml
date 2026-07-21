@@ -28,6 +28,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Compile Python sources
         run: python -m compileall -q backend manager tests launch.py
+      - name: Validate release packaging contract
+        if: matrix.python-version == '3.12'
+        run: python -m unittest -v tests.test_release_packaging
 
   frontend-build:
     name: Frontend production build

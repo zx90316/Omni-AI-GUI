@@ -14,10 +14,20 @@ import os
 import subprocess
 import importlib
 import shutil
+import json
 from pathlib import Path
+
+from omni_version import __version__
 
 PROJECT_ROOT_ENV = "OMNI_AI_PROJECT_ROOT"
 CLONE_URL = "https://github.com/zx90316/Omni-AI-GUI.git"
+BOOTSTRAP_STATE_DIR = "Omni-AI-Manager"
+BOOTSTRAP_STATE_FILE = "bootstrap.json"
+
+
+def is_packaged() -> bool:
+    """Return whether this module is running as a Nuitka compiled build."""
+    return "__compiled__" in globals()
 
 
 def is_project_directory(path: Path) -> bool:
@@ -30,6 +40,106 @@ def is_project_directory(path: Path) -> bool:
             path / "frontend" / "package.json",
         )
     )
+
+
+def project_integrity_errors(path: Path) -> list[str]:
+    """Return missing files that make a release snapshot unusable."""
+    required = (
+        "backend/app.py",
+        "backend/ocr_correction_map.json",
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/src/main.jsx",
+        "manager/app.py",
+        "manager/requirements.txt",
+        ".env.example",
+        "manager_config.json",
+        "requirements.txt",
+    )
+    return [item for item in required if not (path / item).is_file()]
+
+
+def packaged_project_root() -> Path:
+    """Resolve the project snapshot beside the compiled Manager."""
+    override = get_project_override()
+    if override is not None:
+        return override
+    if is_packaged():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def handle_metadata_commands(argv: list[str] | None = None) -> bool:
+    """Handle non-GUI diagnostics used by release verification."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--version" in args:
+        print(f"Omni AI Manager {__version__}")
+        return True
+    verify_bootstrap = "--verify-bootstrap" in args
+    verify_install = "--verify-install" in args
+    if not verify_install and not verify_bootstrap:
+        return False
+
+    command = "--verify-bootstrap" if verify_bootstrap else "--verify-install"
+    index = args.index(command)
+    output_path = None
+    if index + 1 < len(args) and not args[index + 1].startswith("--"):
+        output_path = Path(args[index + 1]).expanduser().resolve()
+
+    missing: list[str] = []
+    override = get_project_override(args, os.environ)
+    if verify_bootstrap:
+        executable_dir = (
+            Path(sys.executable).resolve().parent
+            if is_packaged()
+            else Path(__file__).resolve().parent
+        )
+        root = discover_project_root(
+            executable_dir,
+            explicit=override,
+            saved=load_saved_project_root(),
+        )
+        if root is None:
+            root = executable_dir
+            missing.append("No complete Omni-AI-GUI project could be discovered.")
+        else:
+            try:
+                activate_project_root(root)
+                __import__("manager.app")
+            except Exception as exc:
+                missing.append(f"Manager project import failed: {exc}")
+    else:
+        root = packaged_project_root()
+        if override is not None:
+            missing = project_integrity_errors(root)
+            if not missing:
+                try:
+                    activate_project_root(root)
+                    __import__("manager.app")
+                except Exception as exc:
+                    missing.append(f"Manager project import failed: {exc}")
+        elif is_packaged():
+            for item in ("Omni-AI-Manager.exe", "LICENSE", "SECURITY.md", "README_RELEASE.txt"):
+                if not (root / item).is_file():
+                    missing.append(item)
+        else:
+            missing = project_integrity_errors(root)
+    result = {
+        "application": "Omni AI Manager",
+        "version": __version__,
+        "project_root": str(root),
+        "status": "ok" if not missing else "error",
+        "missing": missing,
+    }
+    payload = json.dumps(result, ensure_ascii=False, indent=2)
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(payload + "\n", encoding="utf-8")
+    else:
+        print(payload)
+    if missing:
+        raise SystemExit(3)
+    return True
 
 
 def get_project_override(
@@ -48,6 +158,95 @@ def get_project_override(
     return Path(value).expanduser().resolve() if value else None
 
 
+def get_bootstrap_state_file(environ: dict[str, str] | None = None) -> Path:
+    """Use per-user state so a read-only EXE directory is still supported."""
+    env = os.environ if environ is None else environ
+    local_app_data = env.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        base = Path(local_app_data).expanduser()
+    else:
+        base = Path.home() / ".omni-ai-manager"
+        return base / BOOTSTRAP_STATE_FILE
+    return base / BOOTSTRAP_STATE_DIR / BOOTSTRAP_STATE_FILE
+
+
+def load_saved_project_root(state_file: Path | None = None) -> Path | None:
+    """Return the last valid project root, ignoring stale or malformed state."""
+    path = get_bootstrap_state_file() if state_file is None else Path(state_file)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        project_text = data.get("project_root", "") if isinstance(data, dict) else ""
+        if not isinstance(project_text, str) or not project_text.strip():
+            return None
+        project_root = Path(project_text).expanduser().resolve()
+    except (OSError, ValueError, TypeError):
+        return None
+    return project_root if is_project_directory(project_root) else None
+
+
+def save_project_root(project_dir: Path, state_file: Path | None = None) -> bool:
+    """Persist a validated project root atomically for later direct launches."""
+    project_root = Path(project_dir).expanduser().resolve()
+    if not is_project_directory(project_root):
+        return False
+    path = get_bootstrap_state_file() if state_file is None else Path(state_file)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_text(
+            json.dumps({"project_root": str(project_root)}, ensure_ascii=False, indent=2)
+            + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temp_path, path)
+        return True
+    except OSError:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def discover_project_root(
+    executable_dir: Path,
+    *,
+    explicit: Path | None = None,
+    saved: Path | None = None,
+) -> Path | None:
+    """Find a project beside the EXE or from a previous valid selection."""
+    executable_dir = Path(executable_dir).expanduser().resolve()
+    candidates = (
+        explicit,
+        executable_dir,
+        executable_dir / "Omni-AI-GUI",
+        saved,
+    )
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        resolved = Path(candidate).expanduser().resolve()
+        key = os.path.normcase(str(resolved))
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_project_directory(resolved):
+            return resolved
+    return None
+
+
+def activate_project_root(project_dir: Path) -> Path:
+    """Expose an external project tree to compiled Manager imports."""
+    resolved = project_dir.expanduser().resolve()
+    os.environ[PROJECT_ROOT_ENV] = str(resolved)
+    os.chdir(resolved)
+    project_text = str(resolved)
+    if project_text not in sys.path:
+        sys.path.insert(0, project_text)
+    return resolved
+
+
 def configure_project_override() -> Path | None:
     """Validate and publish the external source tree used by a packaged Manager."""
     project_dir = get_project_override()
@@ -55,29 +254,30 @@ def configure_project_override() -> Path | None:
         return None
     if not is_project_directory(project_dir):
         raise RuntimeError(f"指定的 Omni AI 專案目錄無效: {project_dir}")
-    os.environ[PROJECT_ROOT_ENV] = str(project_dir)
-    os.chdir(project_dir)
-    return project_dir
+    activated = activate_project_root(project_dir)
+    if is_packaged():
+        save_project_root(activated)
+    return activated
 
 
 def auto_clone_setup():
     """
     如果在專案目錄之外執行打包後的 .exe，則自動詢問並 git clone 專案。
-    此功能僅在 sys.frozen == True 時生效。
+    此功能僅在 Nuitka 打包後的 executable 生效。
     """
-    if not getattr(sys, 'frozen', False):
-        return
-
-    override = get_project_override()
-    if override is not None and is_project_directory(override):
+    if not is_packaged():
         return
 
     exe_path = Path(sys.executable).resolve()
     current_dir = exe_path.parent
-
-    # 確認當前目錄是否為專案目錄（藉由辨識是否有 launch.py 或 manager 目錄）
-    # 因為打包後我們希望 exe 被放在專案根目錄下
-    if is_project_directory(current_dir):
+    detected_project = discover_project_root(
+        current_dir,
+        explicit=get_project_override(),
+        saved=load_saved_project_root(),
+    )
+    if detected_project is not None:
+        activate_project_root(detected_project)
+        save_project_root(detected_project)
         return
 
     # 若不在專案目錄中，表示使用者可能只下載了 exe
@@ -123,6 +323,7 @@ def auto_clone_setup():
         )
         if not use_existing:
             sys.exit(0)
+        save_project_root(target_dir)
         child_env = os.environ.copy()
         child_env[PROJECT_ROOT_ENV] = str(target_dir)
         subprocess.Popen(
@@ -196,6 +397,7 @@ def auto_clone_setup():
             "下載完成",
             f"專案已安全下載至：\n{target_dir}\n\n按下確定後啟動管理面板。",
         )
+        save_project_root(target_dir)
         child_env = os.environ.copy()
         child_env[PROJECT_ROOT_ENV] = str(target_dir)
         subprocess.Popen(
@@ -244,6 +446,9 @@ def ensure_dependencies():
 
 
 def main():
+    if handle_metadata_commands():
+        return
+
     try:
         configure_project_override()
     except RuntimeError as exc:
@@ -255,7 +460,7 @@ def main():
 
     # 確保依賴
 
-    if not getattr(sys, 'frozen', False):
+    if not is_packaged():
         ensure_dependencies()
 
     # 啟動管理面板
