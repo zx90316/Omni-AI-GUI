@@ -53,6 +53,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # git show --check needs the parent commit. With the default shallow
+          # depth of one, Git treats HEAD like a root commit and reports every
+          # pre-existing whitespace issue in the repository as newly added.
+          fetch-depth: 2
       - name: Reject tracked runtime secrets and artifacts
         shell: bash
         run: |
