@@ -62,42 +62,52 @@ def _run_nvidia_smi() -> str | None:
 def _parse_cuda_version(nvidia_smi_output: str) -> str | None:
     """
     從 nvidia-smi 輸出中解析 CUDA 版本。
-    nvidia-smi 輸出中通常包含 'CUDA Version: XX.X' 格式的字串。
+    傳統驅動使用 'CUDA Version: XX.X'，新版 Windows 驅動可能使用
+    'CUDA UMD Version: XX.X'。
     """
-    match = re.search(r"CUDA Version:\s*([\d.]+)", nvidia_smi_output)
+    match = re.search(r"CUDA(?:\s+UMD)?\s+Version:\s*([\d.]+)", nvidia_smi_output)
     if match:
         return match.group(1)
     return None
 
 
-def _parse_gpu_name(nvidia_smi_output: str) -> str:
-    """從 nvidia-smi 輸出中解析 GPU 名稱"""
-    # 嘗試從標準輸出格式中提取 GPU 名稱
-    # 格式通常是 | NVIDIA GeForce RTX XXXX ... |
-    match = re.search(r"\|\s+(NVIDIA\s+[^|]+?)\s+\w+\s*-", nvidia_smi_output)
-    if match:
-        return match.group(1).strip()
-
-    # 備用方式：使用 --query-gpu
+def _query_gpu_identity() -> tuple[str | None, str | None]:
+    """使用穩定的 query 介面取得第一張 GPU 的名稱與驅動版本。"""
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version",
+                "--format=csv,noheader",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().split("\n")[0].strip()
-    except Exception:
-        pass
+            first_gpu = result.stdout.strip().splitlines()[0]
+            name, separator, driver = first_gpu.rpartition(",")
+            if separator:
+                return name.strip() or None, driver.strip() or None
+    except Exception as exc:
+        logger.debug("無法查詢 NVIDIA GPU identity: %s", exc)
+    return None, None
 
+
+def _parse_gpu_name(nvidia_smi_output: str) -> str:
+    """從 nvidia-smi 表格輸出解析 GPU 名稱，作為 query 介面的備援。"""
+    # 嘗試從標準輸出格式中提取 GPU 名稱
+    # 格式通常是 | NVIDIA GeForce RTX XXXX ... |
+    match = re.search(r"\|\s+(NVIDIA\s+[^|]+?)\s+\w+\s*-", nvidia_smi_output)
+    if match:
+        return match.group(1).strip()
     return "Unknown NVIDIA GPU"
 
 
 def _parse_driver_version(nvidia_smi_output: str) -> str:
     """從 nvidia-smi 輸出中解析驅動版本"""
-    match = re.search(r"Driver Version:\s*([\d.]+)", nvidia_smi_output)
+    match = re.search(r"(?:Driver|KMD)\s+Version:\s*([\d.]+)", nvidia_smi_output)
     if match:
         return match.group(1)
     return "Unknown"
@@ -148,17 +158,21 @@ def detect_gpu_info() -> dict:
         logger.info("未偵測到 NVIDIA GPU，將使用 CPU 模式")
         return result
 
+    queried_name, queried_driver = _query_gpu_identity()
+    result.update({
+        "has_nvidia": True,
+        "gpu_name": queried_name or _parse_gpu_name(nvidia_smi_output),
+        "driver_version": queried_driver or _parse_driver_version(nvidia_smi_output),
+    })
+
     cuda_version = _parse_cuda_version(nvidia_smi_output)
     if cuda_version is None:
-        logger.warning("無法從 nvidia-smi 輸出中解析 CUDA 版本")
+        logger.warning("已偵測到 NVIDIA GPU，但無法從 nvidia-smi 輸出解析 CUDA 版本，PyTorch 暫用 CPU")
         return result
 
     platform = _select_pytorch_platform(cuda_version)
 
     result.update({
-        "has_nvidia": True,
-        "gpu_name": _parse_gpu_name(nvidia_smi_output),
-        "driver_version": _parse_driver_version(nvidia_smi_output),
         "cuda_version": cuda_version,
         "compute_platform": platform,
         "pytorch_index_url": f"{PYTORCH_INDEX_BASE}/{platform}",
