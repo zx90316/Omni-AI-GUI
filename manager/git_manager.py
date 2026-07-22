@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 from manager.network_utils import check_internet
+from manager.env_manager import register_external_command, unregister_external_command
+from manager.process_manager import _service_creation_flags
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ def _run_git_command(
     cmd = ["git"] + args
     full_output = []
 
+    process = None
     try:
         process = subprocess.Popen(
             cmd,
@@ -48,9 +51,11 @@ def _run_git_command(
             encoding="utf-8",
             errors="replace",
             cwd=str(cwd),
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=_service_creation_flags(),
         )
+        register_external_command(process)
 
+        assert process.stdout is not None
         for line in iter(process.stdout.readline, ""):
             line = line.rstrip("\n\r")
             full_output.append(line)
@@ -75,6 +80,14 @@ def _run_git_command(
         if on_output:
             on_output(msg)
         return False, msg
+    finally:
+        if process is not None:
+            if process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
+            unregister_external_command(process)
 
 
 def git_pull(on_output: Callable[[str], None] | None = None) -> bool:

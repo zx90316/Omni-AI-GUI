@@ -42,6 +42,7 @@ from manager.config import (
 )
 from manager.process_manager import ProcessManager, ProcessStatus
 from manager.env_manager import (
+    cancel_environment_operations,
     create_venv,
     install_python_deps,
     install_frontend_deps,
@@ -49,6 +50,7 @@ from manager.env_manager import (
     get_python_version,
     get_node_version,
     get_npm_version,
+    reset_environment_cancellation,
 )
 from manager.gpu_detector import detect_gpu_info
 from manager.git_manager import git_pull, check_for_updates, get_current_version, is_git_repo
@@ -88,9 +90,13 @@ class ManagerApp:
     """管理面板主視窗"""
 
     def __init__(self):
+        reset_environment_cancellation()
         self.config = load_config()
         self.process_manager: ProcessManager | None = None
         self._model_download_pending = False
+        self._closing = False
+        self._background_threads: set[threading.Thread] = set()
+        self._background_threads_lock = threading.Lock()
 
         # 建立主視窗
         self.root = ttk.Window(
@@ -667,9 +673,10 @@ class ManagerApp:
                 self._console_entries = self._console_entries[-max_lines:]
 
         # UI 更新需要在主線程
-        current_filter = self.console_filter.get()
-        if current_filter == "all" or current_filter == source:
-            self.root.after_idle(self._append_console_ui, line)
+        if not self._closing:
+            current_filter = self.console_filter.get()
+            if current_filter == "all" or current_filter == source:
+                self.root.after_idle(self._append_console_ui, line)
 
     def _append_console_ui(self, line: str):
         """在主線程中更新 Console UI"""
@@ -709,7 +716,8 @@ class ManagerApp:
         label_text = STATUS_LABELS.get(status, str(status))
         bootstyle = STATUS_COLORS.get(status, "secondary")
 
-        self.root.after_idle(self._update_status_label, name, label_text, bootstyle)
+        if not self._closing:
+            self.root.after_idle(self._update_status_label, name, label_text, bootstyle)
 
     def _update_status_label(self, name: str, text: str, bootstyle: str):
         """更新狀態標籤（主線程）"""
@@ -722,8 +730,21 @@ class ManagerApp:
 
     def _run_async(self, func, *args):
         """在背景線程中執行函式"""
-        thread = threading.Thread(target=func, args=args, daemon=True)
+        if self._closing:
+            return None
+
+        def runner():
+            try:
+                func(*args)
+            finally:
+                with self._background_threads_lock:
+                    self._background_threads.discard(threading.current_thread())
+
+        thread = threading.Thread(target=runner, daemon=True, name=f"manager-{func.__name__}")
+        with self._background_threads_lock:
+            self._background_threads.add(thread)
         thread.start()
+        return thread
 
     def _start_backend(self):
         self.process_manager.start_backend()
@@ -975,8 +996,9 @@ class ManagerApp:
                 missing_only=missing_only,
             )
         finally:
-            self._do_refresh_model_status()
-            self.root.after_idle(self._finish_model_download)
+            if not self._closing:
+                self._do_refresh_model_status()
+                self.root.after_idle(self._finish_model_download)
 
     def _confirm_reinstall(self):
         """確認重新安裝"""
@@ -994,6 +1016,7 @@ class ManagerApp:
     def _do_reinstall(self):
         self._append_console("system", "━" * 50)
         self._append_console("system", "⚠️ 先停止所有程序...")
+        cancel_model_download()
         self.process_manager.stop_all()
         import time
         time.sleep(2)
@@ -1198,34 +1221,59 @@ class ManagerApp:
     # ─── 關閉 ─────────────────────────────────────────
 
     def _on_closing(self):
-        """關閉視窗前清理"""
+        """Stop every Manager-owned operation before releasing the project tree."""
         from tkinter import messagebox
 
-        # 檢查是否有程序在運行
-        running = []
+        if self._closing:
+            return
+
+        active = []
         if self.process_manager:
             for name in ["backend", "frontend"]:
-                if self.process_manager.get_status(name) == ProcessStatus.RUNNING:
-                    running.append(name)
+                if self.process_manager.get_status(name) in {
+                    ProcessStatus.STARTING,
+                    ProcessStatus.RUNNING,
+                    ProcessStatus.STOPPING,
+                }:
+                    active.append(name)
+        with self._background_threads_lock:
+            if any(thread.is_alive() for thread in self._background_threads):
+                active.append("背景安裝/下載作業")
 
-        if running:
-            result = messagebox.askyesnocancel(
+        if active:
+            result = messagebox.askokcancel(
                 "關閉管理面板",
-                f"以下程序仍在運行: {', '.join(running)}\n\n"
-                "• 是 - 停止所有程序並關閉\n"
-                "• 否 - 保持程序運行並關閉\n"
-                "• 取消 - 返回管理面板",
+                f"以下作業仍在運行: {', '.join(active)}\n\n"
+                "關閉時會停止所有前後端、安裝及下載程序，並等待檔案解除鎖定。",
             )
-            if result is None:  # 取消
+            if not result:
                 return
-            elif result:  # 是 — 停止所有
-                self._append_console("system", "⏹️ 正在停止所有程序...")
+
+        self._closing = True
+        self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+        try:
+            cancel_model_download()
+            cancel_environment_operations(timeout=10)
+            if self.process_manager:
                 self.process_manager.cleanup()
 
-        if self.process_manager:
-            self.process_manager.stop_health_check()
-
-        self.root.destroy()
+            # External command termination releases most threads immediately.
+            # Bound the wait so a slow network-only thread cannot freeze exit.
+            import time
+            deadline = time.monotonic() + 10
+            while True:
+                with self._background_threads_lock:
+                    threads = [
+                        thread for thread in self._background_threads
+                        if thread is not threading.current_thread() and thread.is_alive()
+                    ]
+                if not threads or time.monotonic() >= deadline:
+                    break
+                for thread in threads:
+                    thread.join(timeout=min(0.5, max(0, deadline - time.monotonic())))
+            cancel_environment_operations(timeout=5)
+        finally:
+            self.root.destroy()
 
 
 def main():

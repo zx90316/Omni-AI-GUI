@@ -337,21 +337,17 @@ class ModelRegistryTests(unittest.TestCase):
 
     def test_download_controller_terminates_active_worker(self):
         class FakeProcess:
-            terminated = False
-
             @staticmethod
             def poll():
                 return None
-
-            def terminate(self):
-                self.terminated = True
 
         controller = ModelDownloadController()
         process = FakeProcess()
         self.assertTrue(controller.begin())
         controller.attach(process)
-        self.assertTrue(controller.cancel())
-        self.assertTrue(process.terminated)
+        with patch("manager.model_manager.terminate_process_tree") as terminate_tree:
+            self.assertTrue(controller.cancel())
+        terminate_tree.assert_called_once_with(process, timeout=10)
         self.assertTrue(controller.is_cancelled())
         controller.finish()
         self.assertFalse(controller.is_active())

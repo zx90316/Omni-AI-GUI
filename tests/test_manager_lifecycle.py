@@ -184,6 +184,11 @@ class BootstrapLifecycleTests(unittest.TestCase):
 
 
 class PythonEnvironmentLifecycleTests(unittest.TestCase):
+    def tearDown(self):
+        env_manager.reset_environment_cancellation()
+        with env_manager._active_commands_lock:
+            env_manager._active_commands.clear()
+
     def test_project_runtime_is_preferred_for_venv_rebuild(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -215,6 +220,20 @@ class PythonEnvironmentLifecycleTests(unittest.TestCase):
                 self.assertTrue(env_manager.install_frontend_deps())
 
         self.assertEqual(run.call_args.args[0][1], "ci")
+
+    def test_shutdown_cancels_active_environment_process_tree(self):
+        class FakeProcess:
+            pid = 8765
+
+        process = FakeProcess()
+        with env_manager._active_commands_lock:
+            env_manager._active_commands.add(process)
+        with patch.object(env_manager, "terminate_process_tree") as terminate_tree:
+            count = env_manager.cancel_environment_operations(timeout=7)
+
+        self.assertEqual(count, 1)
+        terminate_tree.assert_called_once_with(process, timeout=7)
+        self.assertTrue(env_manager._commands_cancelled.is_set())
 
 
 class ManagedProcessLifecycleTests(unittest.TestCase):
@@ -263,6 +282,42 @@ class ManagedProcessLifecycleTests(unittest.TestCase):
             ["taskkill", "/F", "/T", "/PID", "4321"],
         )
         self.assertFalse(process.killed)
+
+    def test_stop_waits_for_reader_and_releases_process_handle(self):
+        class FakeProcess:
+            pid = 4321
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+        class FakeReader:
+            joined = False
+
+            @staticmethod
+            def is_alive():
+                return not FakeReader.joined
+
+            @staticmethod
+            def join(timeout=None):
+                del timeout
+                FakeReader.joined = True
+
+        managed = ManagedProcess("backend", ["python"], Path.cwd())
+        process = FakeProcess()
+        managed.process = process
+        managed._reader_thread = FakeReader()
+
+        def terminate(_process, timeout=10):
+            del timeout
+            _process.returncode = 0
+
+        with patch.object(managed, "_terminate_process", side_effect=terminate):
+            self.assertTrue(managed.stop())
+
+        self.assertTrue(FakeReader.joined)
+        self.assertIsNone(managed._reader_thread)
+        self.assertIsNone(managed.process)
 
     def test_vite_uses_configured_port_without_automatic_fallback(self):
         config = (

@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- 關閉 Manager 時會終止 Backend、Frontend、Git、pip/npm 與模型下載的完整程序樹，等待 log/stdout handle 釋放，避免 `.venv` 與專案檔案被鎖而無法覆蓋更新。
 - 支援 NVIDIA 610 系列驅動的 `KMD Version` 與 `CUDA UMD Version` 輸出，避免 RTX 5090 被誤判為 CPU 模式。
 - Manager 鎖定相容的 ttkbootstrap 1.x，避免乾淨 CI 環境安裝 2.x 後造成 Nuitka 外部專案匯入驗證失敗。
 - Windows 停止 Frontend 時會終止完整 npm/node/Vite process tree。

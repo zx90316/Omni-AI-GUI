@@ -35,10 +35,47 @@ MAX_LOG_BYTES = 10 * 1024 * 1024
 
 
 def _service_creation_flags() -> int:
-    """Run Windows services without allocating a visible console window."""
+    """Run Windows children hidden and in a group that can be terminated as a tree."""
     if os.name != "nt":
         return 0
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return (
+        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
+
+
+def terminate_process_tree(process, timeout: int = 10) -> None:
+    """Terminate a Popen-compatible process and all of its Windows descendants."""
+    if process is None or process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True,
+            text=True,
+            encoding="mbcs",
+            errors="replace",
+            timeout=max(5, timeout),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            process.wait(timeout=min(timeout, 5))
+        except (OSError, subprocess.TimeoutExpired):
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        if result.returncode not in (0, 128) and process.poll() is None:
+            raise RuntimeError(result.stderr.strip() or f"taskkill 結束碼 {result.returncode}")
+        return
+
+    try:
+        process.terminate()
+        process.wait(timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def _health_url(host: str, port: int, path: str = "/") -> str:
@@ -268,6 +305,9 @@ class ManagedProcess:
             self._desired_running = False
             process = self.process
             if not process or process.poll() is not None:
+                self._stop_event.set()
+                self._join_reader_thread(timeout=min(timeout, 5))
+                self.process = None
                 self._active_cmd = None
                 self._active_cwd = None
                 self._active_health_url = None
@@ -280,8 +320,10 @@ class ManagedProcess:
 
         try:
             self._terminate_process(process, timeout=timeout)
+            self._join_reader_thread(timeout=min(timeout, 5))
 
             self._emit_output(f"⏹️ {self.name} 已停止")
+            self.process = None
             self._started_at = None
             self._active_cmd = None
             self._active_cwd = None
@@ -434,43 +476,15 @@ class ManagedProcess:
 
     def _terminate_process(self, process: subprocess.Popen, timeout: int = 10):
         """Terminate the full Windows tree; gracefully stop elsewhere before killing."""
-        if process.poll() is not None:
-            return
+        terminate_process_tree(process, timeout=timeout)
 
-        # npm.cmd is only the launcher on Windows.  Terminating that parent
-        # first leaves node/vite running as an orphan, so taskkill must receive
-        # the still-live root PID and terminate the complete tree atomically.
-        if os.name == "nt":
-            result = subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                capture_output=True,
-                text=True,
-                encoding="mbcs",
-                errors="replace",
-                timeout=max(5, timeout),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            try:
-                process.wait(timeout=min(timeout, 5))
-            except (OSError, subprocess.TimeoutExpired):
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=5)
-            if result.returncode not in (0, 128) and process.poll() is None:
-                raise RuntimeError(
-                    result.stderr.strip() or f"taskkill 結束碼 {result.returncode}"
-                )
-            return
-
-        try:
-            process.terminate()
-            process.wait(timeout=timeout)
-            return
-        except (OSError, subprocess.TimeoutExpired):
-            self._emit_output(f"⚠️ {self.name} 未回應，強制終止中...")
-
-        process.kill()
-        process.wait(timeout=5)
+    def _join_reader_thread(self, timeout: int = 5) -> None:
+        """Wait until stdout/log readers release their file handles."""
+        thread = self._reader_thread
+        if thread and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=timeout)
+        if thread is None or not thread.is_alive():
+            self._reader_thread = None
 
     def _read_output(self, process: subprocess.Popen):
         """讀取程序的 stdout 輸出（在獨立線程中執行）"""
@@ -928,6 +942,11 @@ class ProcessManager:
     def stop_health_check(self):
         """停止健康檢查"""
         self._health_stop_event.set()
+        thread = self._health_thread
+        if thread and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=5)
+        if thread is None or not thread.is_alive():
+            self._health_thread = None
 
     def _health_check_loop(self):
         """健康檢查主迴圈"""
@@ -1013,9 +1032,6 @@ class ProcessManager:
     def cleanup(self):
         """清理所有程序"""
         self.stop_health_check()
-        if self._health_thread and self._health_thread.is_alive():
-            self._health_thread.join(timeout=2)
         for proc in self._processes.values():
-            if proc.is_running():
-                proc.stop()
+            proc.stop()
         self._save_process_state()

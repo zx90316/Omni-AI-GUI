@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 from backend.model_cache import ModelCacheStatus, inspect_model_cache
 from backend.model_registry import MODEL_SPECS, get_model_spec
 from manager.config import PROJECT_ROOT, get_venv_python, is_venv_exists
+from manager.process_manager import _service_creation_flags, terminate_process_tree
 
 
 OutputCallback = Callable[[str], None]
@@ -38,7 +39,7 @@ class ModelDownloadController:
         with self._lock:
             self._process = process
             if self._cancelled.is_set() and process.poll() is None:
-                process.terminate()
+                terminate_process_tree(process, timeout=5)
 
     def detach(self, process: subprocess.Popen) -> None:
         with self._lock:
@@ -53,8 +54,8 @@ class ModelDownloadController:
             process = self._process
             if process is not None and process.poll() is None:
                 try:
-                    process.terminate()
-                except OSError:
+                    terminate_process_tree(process, timeout=10)
+                except (OSError, RuntimeError, subprocess.SubprocessError):
                     pass
             return True
 
@@ -96,7 +97,7 @@ def _inspect(spec) -> ModelCacheStatus:
 
 
 def _creation_flags() -> int:
-    return subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    return _service_creation_flags()
 
 
 def cancel_model_download() -> bool:

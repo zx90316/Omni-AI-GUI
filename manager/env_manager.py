@@ -11,11 +11,13 @@ import shutil
 import subprocess
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Callable
 
 from manager.network_utils import check_internet
 from manager.gpu_detector import detect_gpu_info, get_pytorch_install_args
+from manager.process_manager import _service_creation_flags, terminate_process_tree
 from manager.config import (
     PROJECT_ROOT,
     get_venv_python,
@@ -28,6 +30,40 @@ from manager.config import (
 )
 
 logger = logging.getLogger(__name__)
+_active_commands: set[subprocess.Popen] = set()
+_active_commands_lock = threading.RLock()
+_commands_cancelled = threading.Event()
+
+
+def register_external_command(process: subprocess.Popen) -> None:
+    """Register a Manager-owned command so application shutdown can terminate it."""
+    with _active_commands_lock:
+        _active_commands.add(process)
+    if _commands_cancelled.is_set():
+        terminate_process_tree(process, timeout=5)
+
+
+def unregister_external_command(process: subprocess.Popen) -> None:
+    with _active_commands_lock:
+        _active_commands.discard(process)
+
+
+def cancel_environment_operations(timeout: int = 10) -> int:
+    """Cancel active venv/pip/npm commands and prevent a closing GUI from spawning more."""
+    _commands_cancelled.set()
+    with _active_commands_lock:
+        processes = list(_active_commands)
+    for process in processes:
+        try:
+            terminate_process_tree(process, timeout=timeout)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            logger.exception("Unable to terminate environment command PID %s", process.pid)
+    return len(processes)
+
+
+def reset_environment_cancellation() -> None:
+    """Allow commands again when a new Manager instance starts."""
+    _commands_cancelled.clear()
 
 
 def _probe_python(command: list[str]) -> tuple[int, int] | None:
@@ -112,6 +148,13 @@ def _run_command(
 
     full_output = []
 
+    process = None
+    if _commands_cancelled.is_set():
+        msg = "⏹️ Manager 正在關閉，已取消外部命令"
+        if on_output:
+            on_output(msg)
+        return False, msg
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -120,9 +163,11 @@ def _run_command(
             text=True,
             cwd=str(cwd),
             env=run_env,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=_service_creation_flags(),
         )
+        register_external_command(process)
 
+        assert process.stdout is not None
         for line in iter(process.stdout.readline, ""):
             line = line.rstrip("\n\r")
             full_output.append(line)
@@ -149,6 +194,14 @@ def _run_command(
         if on_output:
             on_output(msg)
         return False, msg
+    finally:
+        if process is not None:
+            if process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
+            unregister_external_command(process)
 
 
 def create_venv(on_output: Callable[[str], None] | None = None) -> bool:
@@ -387,12 +440,17 @@ def _robust_rmtree(
         except Exception:
             pass  # 靜默跳過仍然失敗的檔案
 
-    try:
-        shutil.rmtree(str(path), onerror=_onerror)
-        if not path.exists():
-            return True
-    except Exception:
-        pass
+    # Windows may keep executable/DLL handles briefly after taskkill. Retry
+    # with backoff before declaring the environment locked.
+    for attempt in range(6):
+        try:
+            shutil.rmtree(str(path), onerror=_onerror)
+            if not path.exists():
+                return True
+        except Exception:
+            pass
+        if path.exists():
+            time.sleep(0.25 * (attempt + 1))
 
     # 備用方案：Windows 上使用 rd /s /q
     if os.name == "nt" and path.exists():
