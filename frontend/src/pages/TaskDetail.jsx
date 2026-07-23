@@ -1,6 +1,7 @@
 import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import OcrTaskDetail from './OcrTaskDetail.jsx'
 
 const STATUS_MAP = {
     pending: { label: '等待中', className: 'badge-pending' },
@@ -230,6 +231,9 @@ export default function TaskDetail() {
                     progress_message: data.message,
                 } : prev)
 
+                if (task.task_type === 'ocr' && !data.done) {
+                    fetchTask()
+                }
                 if (data.done) {
                     evtSource.close()
                     // 重新載入完整任務資料
@@ -288,6 +292,10 @@ export default function TaskDetail() {
     const status = STATUS_MAP[task.status] || STATUS_MAP.pending
     const isCompleted = task.status === 'completed'
     const isProcessing = ['pending', 'processing', 'cancelling'].includes(task.status)
+
+    if (task.task_type === 'ocr') {
+        return <OcrTaskDetail task={task} />
+    }
 
     return (
         <div className="fade-in">

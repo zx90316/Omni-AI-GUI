@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float, Boolean, Text, DateTime
+    create_engine, Column, Integer, String, Float, Boolean, Text, DateTime,
+    inspect, text,
 )
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -33,7 +34,7 @@ class User(Base):
 
 
 class Task(Base):
-    """ASR 任務模型"""
+    """Persistent inference task shared by ASR and OCR workflows."""
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -53,6 +54,8 @@ class Task(Base):
     sentences = Column(Text, nullable=True)         # JSON string — 字幕短句
     diarization_result = Column(Text, nullable=True) # JSON string — 語者歸組段落
     diar_segments = Column(Text, nullable=True)     # JSON string — 語者分離原始區段
+    task_options = Column(Text, nullable=True)      # JSON — task-type-specific input options
+    result_data = Column(Text, nullable=True)       # JSON — task-type-specific persisted result
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
@@ -82,6 +85,18 @@ class Task(Base):
     def get_diar_segments(self):
         return json.loads(self.diar_segments) if self.diar_segments else []
 
+    def set_task_options(self, data):
+        self.task_options = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_task_options(self):
+        return json.loads(self.task_options) if self.task_options else None
+
+    def set_result_data(self, data):
+        self.result_data = json.dumps(data, ensure_ascii=False) if data is not None else None
+
+    def get_result_data(self):
+        return json.loads(self.result_data) if self.result_data else None
+
 
 
 def get_db():
@@ -96,6 +111,19 @@ def get_db():
 def init_db():
     """初始化資料庫（建立資料表）"""
     Base.metadata.create_all(bind=engine)
+    # create_all does not add columns to an existing SQLite table. Keep this
+    # narrow migration in-process so upgrades preserve all prior ASR tasks.
+    columns = {column["name"] for column in inspect(engine).get_columns("tasks")}
+    additions = {
+        "task_options": "TEXT",
+        "result_data": "TEXT",
+    }
+    with engine.begin() as connection:
+        for column_name, sql_type in additions.items():
+            if column_name not in columns:
+                connection.execute(
+                    text(f"ALTER TABLE tasks ADD COLUMN {column_name} {sql_type}")
+                )
 
 
 def fail_interrupted_tasks() -> int:
@@ -117,7 +145,7 @@ def fail_interrupted_tasks() -> int:
             else:
                 task.status = "failed"
                 task.progress_message = "服務重啟，任務已中斷"
-                task.error_message = "ASR 處理程序在任務完成前重新啟動，請重新提交任務。"
+                task.error_message = "背景處理程序在任務完成前重新啟動，請重新提交任務。"
             task.completed_at = now
         db.commit()
         return len(interrupted)

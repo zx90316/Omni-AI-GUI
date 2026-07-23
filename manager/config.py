@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "health_probe_timeout": 2,        # 單次 HTTP health probe timeout（秒）
     "health_failure_threshold": 3,    # 連續失敗幾次後重啟
     "startup_timeout": 60,            # 等待服務 readiness 的上限（秒）
+    "model_idle_timeout_minutes": 5,  # 非 ASR 模型閒置自動卸載（分鐘）
     "restart_delay": 3,               # 重啟延遲（秒）
     "max_restart_attempts": 5,        # 最大連續重啟次數
     "console_max_lines": 5000,        # Console 最大行數
@@ -68,6 +69,7 @@ def _normalize_config(saved: dict) -> dict:
         ("health_probe_timeout", 1, 30),
         ("health_failure_threshold", 1, 20),
         ("startup_timeout", 5, 600),
+        ("model_idle_timeout_minutes", 1, 1440),
         ("restart_delay", 0, 3600),
         ("max_restart_attempts", 1, 100),
         ("console_max_lines", 100, 100000),

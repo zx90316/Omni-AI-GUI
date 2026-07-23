@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom'
 const STATUS_MAP = {
     pending: { label: '等待中', className: 'badge-pending' },
     processing: { label: '處理中', className: 'badge-processing' },
+    cancelling: { label: '取消中', className: 'badge-processing' },
+    cancelled: { label: '已取消', className: 'badge-failed' },
     completed: { label: '已完成', className: 'badge-completed' },
     failed: { label: '失敗', className: 'badge-failed' },
 }
@@ -68,7 +70,7 @@ export default function TaskList() {
         <div className="fade-in">
             <div className="page-header">
                 <h2>📋 任務清單</h2>
-                <p>管理所有語音辨識任務</p>
+                <p>管理語音辨識與 OCR 任務</p>
             </div>
 
             <div className="filter-bar">
@@ -109,13 +111,13 @@ export default function TaskList() {
                             >
                                 <div className="task-card-info">
                                     <div className="task-card-filename">
-                                        {task.task_type === 'youtube' ? '📺 ' : (task.task_type === 'subsync_upload' ? '📁 ' : '🎵 ')}
+                                        {task.task_type === 'ocr' ? '📄 ' : (task.task_type === 'youtube' ? '📺 ' : (task.task_type === 'subsync_upload' ? '📁 ' : '🎵 '))}
                                         {task.filename || task.video_title}
                                     </div>
                                     <div className="task-card-meta">
                                         <span>{task.model}</span>
                                         <span>·</span>
-                                        <span>{task.language}</span>
+                                        <span>{task.task_type === 'ocr' ? (task.task_options?.task || 'OCR') : task.language}</span>
                                         <span>·</span>
                                         <span>{formatDate(task.created_at)}</span>
                                     </div>
@@ -138,7 +140,7 @@ export default function TaskList() {
                                         {task.status === 'processing' && <span className="spinner" style={{ width: 10, height: 10 }} />}
                                         {status.label}
                                     </span>
-                                    {task.status === 'completed' && (
+                                    {task.status === 'completed' && task.task_type !== 'ocr' && (
                                         <button
                                             className="btn btn-outline btn-sm"
                                             onClick={(e) => {

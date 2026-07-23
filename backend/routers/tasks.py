@@ -57,6 +57,26 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 _progress_store: dict[int, dict] = {}
 
 
+def _task_response(task: Task) -> dict:
+    return {
+        "id": task.id,
+        "task_type": task.task_type,
+        "video_id": task.video_id,
+        "filename": task.filename,
+        "status": task.status,
+        "model": task.model,
+        "language": task.language,
+        "enable_diarization": task.enable_diarization,
+        "to_traditional": task.to_traditional,
+        "progress": task.progress,
+        "progress_message": task.progress_message,
+        "error_message": task.error_message,
+        "task_options": task.get_task_options(),
+        "created_at": task.created_at,
+        "completed_at": task.completed_at,
+    }
+
+
 def _start_asr_thread(args: tuple) -> None:
     """Single dispatch seam for reliable startup handling and API tests."""
     threading.Thread(target=_run_asr_task, args=args, daemon=True).start()
@@ -191,7 +211,7 @@ def list_tasks(
     if status:
         query = query.filter(Task.status == status)
     tasks = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
-    return tasks
+    return [_task_response(task) for task in tasks]
 
 
 @router.get("/tasks/media/{video_id}")
@@ -201,12 +221,13 @@ def get_task_media(
     current_user: dict = Depends(get_current_user),
 ):
     """取得上傳的本地影音檔案"""
-    if not video_id.startswith("local_"):
+    if not video_id.startswith(("local_", "ocr_")):
         raise HTTPException(status_code=400, detail="僅支援本地上傳檔案")
+    task_type = "ocr" if video_id.startswith("ocr_") else "local"
     owned_task = db.query(Task).filter(
         Task.video_id == video_id,
         Task.owner_id == current_user["owner_id"],
-        Task.task_type == "local",
+        Task.task_type == task_type,
     ).first()
     if owned_task is None:
         raise HTTPException(status_code=404, detail="找不到媒體檔案")
@@ -242,12 +263,14 @@ def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = D
         progress=task.progress,
         progress_message=task.progress_message,
         error_message=task.error_message,
+        task_options=task.get_task_options(),
         created_at=task.created_at,
         completed_at=task.completed_at,
         merged_result=task.get_sentences(),
         raw_text=task.raw_text,
         sentences=task.get_sentences(),
         diarization_result=task.get_diarization_result(),
+        result_data=task.get_result_data(),
     )
 
 
@@ -298,7 +321,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: dict 
     if task.status in {"pending", "processing", "cancelling"}:
         raise HTTPException(status_code=409, detail="任務仍在執行，請先取消後再刪除")
     # If it's a local file, delete it from storage
-    if task.video_id and task.video_id.startswith("local_"):
+    if task.video_id and task.video_id.startswith(("local_", "ocr_")):
         for file_path in UPLOAD_DIR.glob(f"{task.video_id}.*"):
             try:
                 file_path.unlink()
@@ -323,6 +346,8 @@ def cancel_task(
     ).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
+    if task.task_type == "ocr":
+        raise HTTPException(status_code=409, detail="OCR 任務目前不支援取消")
     if task.status == "cancelled":
         return {"status": "cancelled", "message": "任務已取消"}
     if task.status in {"completed", "failed"}:

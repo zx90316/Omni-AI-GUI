@@ -2,6 +2,7 @@
 """HTTP contract tests for ASR upload, ownership, cancellation, and cleanup."""
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import warnings
@@ -11,7 +12,10 @@ from unittest.mock import patch
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI
-from starlette.exceptions import StarletteDeprecationWarning
+try:
+    from starlette.exceptions import StarletteDeprecationWarning
+except ImportError:  # Starlette >= 1.0 removed this warning class.
+    StarletteDeprecationWarning = DeprecationWarning
 
 warnings.filterwarnings(
     "ignore",
@@ -29,6 +33,7 @@ from backend.asr_engine import ASREngine
 from backend.auth_utils import get_current_user
 from backend.database import Base, Task, get_db
 from backend.routers import tasks as tasks_router
+from backend.routers import ocr as ocr_router
 from backend.routers import youtube as youtube_router
 
 
@@ -47,6 +52,7 @@ class ASRApiTests(unittest.TestCase):
 
         app = FastAPI()
         app.include_router(tasks_router.router)
+        app.include_router(ocr_router.router)
         app.include_router(youtube_router.router)
 
         def override_db():
@@ -62,6 +68,9 @@ class ASRApiTests(unittest.TestCase):
         self.patches = [
             patch.object(tasks_router, "UPLOAD_DIR", self.upload_dir),
             patch.object(tasks_router, "_start_asr_thread", return_value=None),
+            patch.object(ocr_router, "UPLOAD_DIR", self.upload_dir),
+            patch.object(ocr_router, "SessionLocal", self.Session),
+            patch.object(ocr_router, "require_models", return_value=None),
             patch.object(youtube_router, "TEMP_DIR", self.upload_dir),
             patch.object(youtube_router, "_start_youtube_thread", return_value=None),
         ]
@@ -174,6 +183,87 @@ class ASRApiTests(unittest.TestCase):
         self.owner = {"owner_id": "owner-b", "role": "user"}
         denied = self.client.get(f"/api/tasks/media/{task['video_id']}")
         self.assertEqual(denied.status_code, 404)
+
+    def test_ocr_task_survives_page_navigation_and_persists_results(self):
+        page_result = {
+            "success": True,
+            "data": {"invoice": "A-1"},
+            "json": {"invoice": "A-1"},
+            "markdown": "# A-1",
+            "raw": "# A-1",
+            "error": None,
+            "provider": "local",
+            "task": "extract",
+            "layout": False,
+        }
+
+        def process_stream(**_kwargs):
+            yield {
+                "page": 1,
+                "total": 1,
+                "percent": 100.0,
+                "result": page_result,
+                "done": True,
+            }
+
+        def run_synchronously(args):
+            ocr_router._run_ocr_task(*args)
+
+        with (
+            patch.object(ocr_router, "process_file_stream", side_effect=process_stream),
+            patch.object(
+                ocr_router,
+                "_start_ocr_thread",
+                side_effect=run_synchronously,
+            ),
+        ):
+            response = self.client.post(
+                "/api/ocr/process",
+                files={"file": ("invoice.png", b"fake-image", "image/png")},
+                data={
+                    "fields": '{"invoice": ""}',
+                    "model": "glm-ocr",
+                    "max_retries": "1",
+                    "auto_merge": "false",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        events = [
+            json.loads(line[5:].strip())
+            for line in response.text.splitlines()
+            if line.strip().startswith("data:")
+        ]
+        final_event = events[-1]
+        self.assertEqual(final_event["status"], "completed")
+        self.assertTrue(final_event["success"])
+        self.assertEqual(final_event["data"], {"invoice": "A-1"})
+        self.assertEqual(final_event["raw"], "# A-1")
+
+        tasks = self.client.get("/api/tasks").json()
+        ocr_task = next(item for item in tasks if item["task_type"] == "ocr")
+        self.assertEqual(ocr_task["task_options"]["fields"], {"invoice": ""})
+
+        detail = self.client.get(f"/api/tasks/{ocr_task['id']}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(
+            detail.json()["result_data"]["results"][0]["data"],
+            {"invoice": "A-1"},
+        )
+
+        media = self.client.get(f"/api/tasks/media/{ocr_task['video_id']}")
+        self.assertEqual(media.status_code, 200)
+
+        self.owner = {"owner_id": "owner-b", "role": "user"}
+        self.assertEqual(
+            self.client.get(f"/api/tasks/{ocr_task['id']}").status_code,
+            404,
+        )
+        self.owner = {"owner_id": "owner-a", "role": "user"}
+
+        deleted = self.client.delete(f"/api/tasks/{ocr_task['id']}")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(list(self.upload_dir.glob(f"{ocr_task['video_id']}.*")), [])
 
     def test_youtube_task_can_be_cancelled_before_download_starts(self):
         created = self.client.post(

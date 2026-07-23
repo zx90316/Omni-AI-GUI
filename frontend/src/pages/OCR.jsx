@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { fetchWithAuth } from '../utils/api.js'
 import { ModelRequirement, useModelRequirement } from '../components/ModelStatus.jsx'
 
@@ -42,6 +43,7 @@ function downloadText(text, type, extension) {
 }
 
 export default function OCR() {
+    const navigate = useNavigate()
     const [file, setFile] = useState(null)
     const [dragOver, setDragOver] = useState(false)
     const fileInputRef = useRef(null)
@@ -65,6 +67,7 @@ export default function OCR() {
     const [documentResult, setDocumentResult] = useState(null)
     const [error, setError] = useState('')
     const [copied, setCopied] = useState(false)
+    const [taskId, setTaskId] = useState(null)
 
     useEffect(() => {
         let active = true
@@ -96,6 +99,7 @@ export default function OCR() {
         setCurrentPage(0)
         setTotalPages(0)
         setError('')
+        setTaskId(null)
     }, [])
 
     const selectFile = useCallback(selected => {
@@ -190,19 +194,16 @@ export default function OCR() {
                     } catch {
                         continue
                     }
+                    if (data.task_id) setTaskId(data.task_id)
                     setProgress(data.percent || 0)
                     setCurrentPage(data.page || 0)
                     setTotalPages(data.total || 0)
-                    if (data.error && !data.all_results) {
-                        setError(data.error)
-                    }
-                    if (data.done && data.all_results) {
+                    if (data.error) setError(data.error)
+                    if (Array.isArray(data.all_results)) {
                         setResults(data.all_results)
-                        setMergedResult(data.merged || null)
-                        setDocumentResult(data.document || null)
-                    } else if (!data.done) {
-                        setResults(previous => [...previous, data])
                     }
+                    setMergedResult(data.merged || null)
+                    setDocumentResult(data.document || null)
                 }
             }
         } catch (reason) {
@@ -398,6 +399,12 @@ export default function OCR() {
                     <div className="progress-bar-container" style={{ marginTop: 16 }}>
                         <div className="progress-bar-fill processing" style={{ width: `${progress}%` }} />
                     </div>
+                    {taskId && (
+                        <button className="btn btn-outline btn-sm" style={{ marginTop: 16 }} onClick={() => navigate(`/tasks/${taskId}`)}>
+                            在任務清單中查看
+                        </button>
+                    )}
+                    <p className="text-muted" style={{ marginTop: 12 }}>可切換到其他頁面，辨識會在背景繼續。</p>
                 </div>
             )}
 
@@ -406,6 +413,7 @@ export default function OCR() {
                     <div className="ocr-results-header">
                         <h3>辨識結果</h3>
                         <div className="ocr-results-actions">
+                            {taskId && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/tasks/${taskId}`)}>任務詳情</button>}
                             <button className="btn btn-outline btn-sm" onClick={copyResult}>{copied ? '✅ 已複製' : '📋 複製'}</button>
                             <button className="btn btn-outline btn-sm" onClick={() => downloadText(markdownExport, 'text/markdown', 'md')} disabled={!markdownExport}>💾 Markdown</button>
                             <button className="btn btn-outline btn-sm" onClick={() => downloadText(jsonExport, 'application/json', 'json')}>💾 JSON</button>

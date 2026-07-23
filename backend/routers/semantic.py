@@ -15,6 +15,7 @@ from backend.semantic_engine import (
     init_semantic_models,
     start_worker
 )
+from backend.model_lifecycle import model_idle_manager
 from backend.model_availability import require_models
 
 router = APIRouter(
@@ -50,35 +51,52 @@ class EmbeddingRequest(BaseModel):
 async def process_request(model_name: str, data: Dict[str, Any], timeout: float = None):
     if timeout is None:
         timeout = config.request_timeout
-        
-    if not model_container.models_loaded:
-        # If not loaded, try to load lazily (this might block or we just tell the user models are missing)
-        raise HTTPException(
-            status_code=503, 
-            detail="Semantic 模型尚未載入或未安裝 (請確認 Model_Files 目錄存在並包含模型)"
+
+    resource_name = (
+        "bge_reranker" if model_name == "reranker" else "bge_embedding"
+    )
+    with model_idle_manager.activity(resource_name):
+        selected_model = (
+            model_container.reranker
+            if model_name == "reranker"
+            else model_container.embedding_model
         )
-        
-    if request_queue.full():
-        raise HTTPException(
-            status_code=503, 
-            detail="伺服器忙碌，請求隊列已滿，請稍後再試"
-        )
-        
-    loop = asyncio.get_running_loop()
-    future: Future = loop.create_future()
-    
-    try:
-        await request_queue.put((model_name, data, future))
-        result = await asyncio.wait_for(future, timeout=timeout)
-        return result
-    except asyncio.TimeoutError:
-        if not future.done():
-            future.cancel()
-        raise HTTPException(status_code=504, detail="處理請求超時")
-    except Exception as e:
-        if not future.done():
-            future.cancel()
-        raise HTTPException(status_code=500, detail=str(e))
+        if selected_model is None:
+            initialized = await asyncio.to_thread(init_semantic_models, model_name)
+            selected_model = (
+                model_container.reranker
+                if model_name == "reranker"
+                else model_container.embedding_model
+            )
+            if not initialized or selected_model is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Semantic 模型未安裝或無法從本機快取載入，請先在 Manager 下載模型。",
+                )
+        start_worker()
+
+        if request_queue.full():
+            raise HTTPException(
+                status_code=503,
+                detail="語意處理佇列已滿，請稍後再試。",
+            )
+
+        loop = asyncio.get_running_loop()
+        future: Future = loop.create_future()
+
+        try:
+            await request_queue.put((model_name, data, future))
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            if not future.done():
+                future.cancel()
+            raise HTTPException(status_code=504, detail="語意處理逾時")
+        except HTTPException:
+            raise
+        except Exception as e:
+            if not future.done():
+                future.cancel()
+            raise HTTPException(status_code=500, detail=str(e))
 
 # ================= 路由 =================
 @router.post("/rerank", summary="計算文本對的相關性分數")

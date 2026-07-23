@@ -12,6 +12,7 @@
   "health_probe_timeout": 2,
   "health_failure_threshold": 3,
   "startup_timeout": 60,
+  "model_idle_timeout_minutes": 5,
   "restart_delay": 3,
   "max_restart_attempts": 5,
   "console_max_lines": 5000,

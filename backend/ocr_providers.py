@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 from PIL import Image
 
+from backend.model_lifecycle import model_idle_manager
 from backend.model_registry import MODEL_IDS
 
 
@@ -144,45 +145,47 @@ class TransformersOCRProvider(OCRProvider):
         prompt: str,
         options: GenerationOptions,
     ) -> str:
-        self._load(options.model)
-        data_uri = _image_data_uri(image)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "url": data_uri},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-        with self._inference_lock:
-            try:
-                inputs = self._processor.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
-                    return_tensors="pt",
-                ).to(self._model.device)
-                inputs.pop("token_type_ids", None)
-                generation_kwargs: Dict[str, Any] = {
-                    "max_new_tokens": options.max_tokens,
-                    "do_sample": options.temperature > 0,
+        with model_idle_manager.activity("ocr"):
+            self._load(options.model)
+            model_idle_manager.mark_loaded("ocr")
+            data_uri = _image_data_uri(image)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "url": data_uri},
+                        {"type": "text", "text": prompt},
+                    ],
                 }
-                if options.temperature > 0:
-                    generation_kwargs.update(
-                        temperature=options.temperature,
-                        top_p=options.top_p,
+            ]
+            with self._inference_lock:
+                try:
+                    inputs = self._processor.apply_chat_template(
+                        messages,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_dict=True,
+                        return_tensors="pt",
+                    ).to(self._model.device)
+                    inputs.pop("token_type_ids", None)
+                    generation_kwargs: Dict[str, Any] = {
+                        "max_new_tokens": options.max_tokens,
+                        "do_sample": options.temperature > 0,
+                    }
+                    if options.temperature > 0:
+                        generation_kwargs.update(
+                            temperature=options.temperature,
+                            top_p=options.top_p,
+                        )
+                    generated_ids = self._model.generate(**inputs, **generation_kwargs)
+                    prompt_length = inputs["input_ids"].shape[1]
+                    text = self._processor.decode(
+                        generated_ids[0][prompt_length:],
+                        skip_special_tokens=True,
                     )
-                generated_ids = self._model.generate(**inputs, **generation_kwargs)
-                prompt_length = inputs["input_ids"].shape[1]
-                text = self._processor.decode(
-                    generated_ids[0][prompt_length:],
-                    skip_special_tokens=True,
-                )
-                return text.strip()
-            except Exception as exc:
-                raise OCRProviderError(f"本機 GLM-OCR 推論失敗: {exc}") from exc
+                    return text.strip()
+                except Exception as exc:
+                    raise OCRProviderError(f"本機 GLM-OCR 推論失敗: {exc}") from exc
 
     def unload(self) -> bool:
         with self._inference_lock, self._load_lock:
@@ -353,6 +356,9 @@ def provider_statuses() -> list[Dict[str, Any]]:
 def unload_ocr_models() -> bool:
     provider = get_ocr_provider("local")
     return provider.unload()
+
+
+model_idle_manager.register("ocr", unload_ocr_models)
 
 
 class InProcessSDKClient:

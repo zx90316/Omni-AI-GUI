@@ -33,6 +33,7 @@ class TaskResponse(BaseModel):
     progress: float
     progress_message: str
     error_message: Optional[str] = None
+    task_options: Optional[dict[str, Any]] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
 
@@ -45,6 +46,7 @@ class TaskDetailResponse(TaskResponse):
     raw_text: Optional[str] = None
     sentences: Optional[List[Any]] = None
     diarization_result: Optional[List[Any]] = None
+    result_data: Optional[Any] = None
 
     model_config = {"from_attributes": True}
 
@@ -69,5 +71,4 @@ class YouTubeAnalyzeRequest(BaseModel):
     url: str
     model: str = "1.7B (高品質)"
     language: str = "中文"
-
 

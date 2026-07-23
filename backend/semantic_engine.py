@@ -20,6 +20,8 @@ import psutil
 import numpy as np
 from contextlib import asynccontextmanager
 
+from backend.model_lifecycle import model_idle_manager
+
 # 如果本機沒有安裝 FlagEmbedding，可以加上 try...except 容錯
 try:
     from FlagEmbedding import FlagReranker, BGEM3FlagModel
@@ -187,9 +189,24 @@ class ModelContainer:
             
             self._models_loaded = False
 
+    def cleanup_reranker(self) -> bool:
+        with self._lock:
+            had_model = self._reranker is not None
+            self._reranker = None
+            self._models_loaded = self._embedding_model is not None
+            return had_model
+
+    def cleanup_embedding(self) -> bool:
+        with self._lock:
+            had_model = self._embedding_model is not None
+            self._embedding_model = None
+            self._models_loaded = self._reranker is not None
+            return had_model
+
 model_container = ModelContainer()
 request_queue: Queue = asyncio.Queue(maxsize=config.max_queue_size)
 _worker_task: Optional[asyncio.Task] = None
+_semantic_load_lock = threading.RLock()
 
 # ================== 記憶體清理 ==================
 def cleanup_gpu_memory():
@@ -309,14 +326,15 @@ async def gpu_processor_worker():
                             raise RuntimeError("Reranker 模型未載入")
                         
                         def rerank_blocking_call():
-                            pairs = data['pairs']
-                            normalize = data.get('normalize', True)
-                            result = model_container.reranker.compute_score(
-                                pairs,
-                                batch_size=config.batch_size, 
-                                normalize=normalize
-                            )
-                            return result
+                            with model_idle_manager.activity("bge_reranker"):
+                                pairs = data['pairs']
+                                normalize = data.get('normalize', True)
+                                result = model_container.reranker.compute_score(
+                                    pairs,
+                                    batch_size=config.batch_size,
+                                    normalize=normalize
+                                )
+                                return result
                         
                         result = await asyncio.to_thread(rerank_blocking_call)
                         if not future.cancelled():
@@ -327,9 +345,10 @@ async def gpu_processor_worker():
                             raise RuntimeError("Embedding 模型未載入")
                         
                         def embed_blocking_call():
-                            sentences = data['sentences']
-                            embeddings = process_embeddings_in_batches(sentences)
-                            return embeddings.tolist()
+                            with model_idle_manager.activity("bge_embedding"):
+                                sentences = data['sentences']
+                                embeddings = process_embeddings_in_batches(sentences)
+                                return embeddings.tolist()
                             
                         result = await asyncio.to_thread(embed_blocking_call)
                         if not future.cancelled():
@@ -370,7 +389,14 @@ def _is_network_error(e: Exception) -> bool:
     return any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"])
 
 
-def init_semantic_models():
+def init_semantic_models(target_model: Optional[str] = None):
+    """Load missing semantic models once and refresh their idle deadline."""
+
+    with _semantic_load_lock:
+        return _init_semantic_models(target_model)
+
+
+def _init_semantic_models(target_model: Optional[str] = None):
     """初始化並載入 Semantic Models (Reranker, Embedding)，含離線保護"""
     if not FlagReranker or not BGEM3FlagModel:
         logger.warning("未安裝 FlagEmbedding。請使用 `pip install FlagEmbedding` 來啟用 Semantic 引擎。")
@@ -391,46 +417,56 @@ def init_semantic_models():
         from backend.model_registry import MODEL_IDS
 
         reranker_id = MODEL_IDS["bge_reranker"]
-        logger.info(f"正在從本機快取載入 Reranker 模型 {reranker_id}...")
-        try:
-            if not is_model_cached(reranker_id):
-                logger.warning(make_offline_error_message(reranker_id))
-            else:
-                reranker = FlagReranker(reranker_id, use_fp16=True, device=device)
-                _ensure_reranker_tokenizer_compatibility(reranker)
-                if hasattr(reranker, 'model'):
-                    reranker.model.eval()
-                    for param in reranker.model.parameters():
-                        param.requires_grad = False
-                model_container.reranker = reranker
-                logger.info("✅ Reranker 模型載入成功")
-        except Exception as e:
-            if _is_network_error(e):
-                logger.warning(make_offline_error_message(reranker_id))
-            else:
-                logger.error(f"Reranker 模型載入或下載失敗: {e}")
+        load_reranker = target_model in (None, "reranker")
+        load_embedding = target_model in (None, "embedding")
+
+        if load_reranker and model_container.reranker is None:
+            logger.info(f"正在從本機快取載入 Reranker 模型 {reranker_id}...")
+            try:
+                if not is_model_cached(reranker_id):
+                    logger.warning(make_offline_error_message(reranker_id))
+                else:
+                    reranker = FlagReranker(reranker_id, use_fp16=True, device=device)
+                    _ensure_reranker_tokenizer_compatibility(reranker)
+                    if hasattr(reranker, 'model'):
+                        reranker.model.eval()
+                        for param in reranker.model.parameters():
+                            param.requires_grad = False
+                    model_container.reranker = reranker
+                    logger.info("✅ Reranker 模型載入成功")
+            except Exception as e:
+                if _is_network_error(e):
+                    logger.warning(make_offline_error_message(reranker_id))
+                else:
+                    logger.error(f"Reranker 模型載入或下載失敗: {e}")
             
         # 2. Embedding
         embedding_id = MODEL_IDS["bge_embedding"]
-        logger.info(f"正在從本機快取載入 Embedding 模型 {embedding_id}...")
-        try:
-            if not is_model_cached(embedding_id):
-                logger.warning(make_offline_error_message(embedding_id))
-            else:
-                embedding_model = BGEM3FlagModel(embedding_id, use_fp16=True, device=device)
-                if hasattr(embedding_model, 'model'):
-                    embedding_model.model.eval()
-                    for param in embedding_model.model.parameters():
-                        param.requires_grad = False
-                model_container.embedding_model = embedding_model
-                logger.info("✅ Embedding 模型載入成功")
-        except Exception as e:
-            if _is_network_error(e):
-                logger.warning(make_offline_error_message(embedding_id))
-            else:
-                logger.error(f"Embedding 模型載入或下載失敗: {e}")
+        if load_embedding and model_container.embedding_model is None:
+            logger.info(f"正在從本機快取載入 Embedding 模型 {embedding_id}...")
+            try:
+                if not is_model_cached(embedding_id):
+                    logger.warning(make_offline_error_message(embedding_id))
+                else:
+                    embedding_model = BGEM3FlagModel(embedding_id, use_fp16=True, device=device)
+                    if hasattr(embedding_model, 'model'):
+                        embedding_model.model.eval()
+                        for param in embedding_model.model.parameters():
+                            param.requires_grad = False
+                    model_container.embedding_model = embedding_model
+                    logger.info("✅ Embedding 模型載入成功")
+            except Exception as e:
+                if _is_network_error(e):
+                    logger.warning(make_offline_error_message(embedding_id))
+                else:
+                    logger.error(f"Embedding 模型載入或下載失敗: {e}")
             
             
+        if load_reranker and model_container.reranker is not None:
+            model_idle_manager.mark_loaded("bge_reranker")
+        if load_embedding and model_container.embedding_model is not None:
+            model_idle_manager.mark_loaded("bge_embedding")
+
         if model_container.reranker or model_container.embedding_model:
             model_container.mark_loaded()
             return True
@@ -449,9 +485,26 @@ def start_worker():
         except RuntimeError:
             logger.warning("無法啟動 Semantic worker (no running event loop)")
 
+
+def unload_reranker_model() -> bool:
+    had_model = model_container.cleanup_reranker()
+    cleanup_gpu_memory()
+    return had_model
+
+
+def unload_embedding_model() -> bool:
+    had_model = model_container.cleanup_embedding()
+    cleanup_gpu_memory()
+    return had_model
+
+
+model_idle_manager.register("bge_reranker", unload_reranker_model)
+model_idle_manager.register("bge_embedding", unload_embedding_model)
+
+
 def stop_worker_and_cleanup():
     global _worker_task
     if _worker_task and not _worker_task.done():
         _worker_task.cancel()
-    model_container.cleanup()
-    cleanup_gpu_memory()
+    model_idle_manager.unload_now("bge_reranker")
+    model_idle_manager.unload_now("bge_embedding")

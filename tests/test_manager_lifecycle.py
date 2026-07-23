@@ -43,6 +43,7 @@ class ConfigLifecycleTests(unittest.TestCase):
                 "health_probe_timeout": 0,
                 "health_failure_threshold": 99,
                 "startup_timeout": 1,
+                "model_idle_timeout_minutes": 0,
                 "auto_restart": "yes",
                 "frontend_host": "  localhost  ",
             }
@@ -53,6 +54,7 @@ class ConfigLifecycleTests(unittest.TestCase):
         self.assertEqual(normalized["health_probe_timeout"], 2)
         self.assertEqual(normalized["health_failure_threshold"], 3)
         self.assertEqual(normalized["startup_timeout"], 60)
+        self.assertEqual(normalized["model_idle_timeout_minutes"], 5)
         self.assertIs(normalized["auto_restart"], True)
         self.assertEqual(normalized["frontend_host"], "localhost")
 
@@ -375,6 +377,21 @@ class ManagedProcessLifecycleTests(unittest.TestCase):
         self.assertEqual(process.cmd, ["new"])
         self.assertEqual(process.env, {"A": "B"})
 
+    def test_backend_receives_configured_model_idle_timeout(self):
+        configured = manager_config.DEFAULT_CONFIG | {
+            "model_idle_timeout_minutes": 17,
+        }
+        with (
+            patch("manager.process_manager.load_config", return_value=configured),
+            patch.object(ProcessManager, "_adopt_existing_processes"),
+        ):
+            manager = ProcessManager()
+
+        self.assertEqual(
+            manager._processes["backend"].env["MODEL_IDLE_TIMEOUT_MINUTES"],
+            "17",
+        )
+
     def test_health_url_rewrites_wildcard_bind_address(self):
         self.assertEqual(
             _health_url("0.0.0.0", 8000, "/health/ready"),
@@ -524,22 +541,28 @@ class BackendHealthContractTests(unittest.TestCase):
             backend_app.workflow_router,
             backend_app.semantic_router,
         )
-        included_routers = [
-            route
-            for route in backend_app.app.routes
-            if hasattr(route, "original_router")
-        ]
         for protected_router in protected_routers:
-            included = next(
-                route
-                for route in included_routers
-                if route.original_router is protected_router
-            )
-            dependency_calls = {
-                dependency.dependency
-                for dependency in included.include_context.dependencies
+            protected_paths = {
+                route.path
+                for route in protected_router.routes
+                if hasattr(route, "dependant")
             }
-            self.assertIn(get_current_user, dependency_calls, protected_router.prefix)
+            included_routes = [
+                route
+                for route in backend_app.app.routes
+                if getattr(route, "path", None) in protected_paths
+            ]
+            self.assertTrue(included_routes, protected_router.prefix)
+            for route in included_routes:
+                dependency_calls = {
+                    dependency.call
+                    for dependency in route.dependant.dependencies
+                }
+                self.assertIn(
+                    get_current_user,
+                    dependency_calls,
+                    f"{route.methods} {route.path}",
+                )
 
 
 if __name__ == "__main__":

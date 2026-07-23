@@ -21,6 +21,7 @@ from backend.routers.workflow import router as workflow_router
 from backend.routers.semantic import router as semantic_router
 from backend.routers.system import router as system_router
 from backend.semantic_engine import init_semantic_models, start_worker, stop_worker_and_cleanup
+from backend.model_lifecycle import model_idle_manager
 from backend.network_utils import set_hf_offline_env
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ async def startup():
 def shutdown():
     app.state.ready = False
     stop_worker_and_cleanup()
+    model_idle_manager.shutdown()
 
 
 @app.get("/health/live", tags=["health"])

@@ -619,6 +619,11 @@ class ProcessManager:
             cwd=PROJECT_ROOT,
             on_output=self.on_output,
             on_status_change=self.on_status_change,
+            env={
+                "MODEL_IDLE_TIMEOUT_MINUTES": str(
+                    self._config.get("model_idle_timeout_minutes", 5)
+                )
+            },
             health_url=_health_url(backend_host, backend_port, "/health/ready"),
             startup_timeout=self._config.get("startup_timeout", 60),
             health_probe_timeout=self._config.get("health_probe_timeout", 2),
@@ -789,6 +794,11 @@ class ProcessManager:
                 str(backend_port),
             ],
             cwd=PROJECT_ROOT,
+            env={
+                "MODEL_IDLE_TIMEOUT_MINUTES": str(
+                    self._config.get("model_idle_timeout_minutes", 5)
+                )
+            },
             health_url=_health_url(backend_host, backend_port, "/health/ready"),
             startup_timeout=self._config.get("startup_timeout", 60),
             health_probe_timeout=self._config.get("health_probe_timeout", 2),

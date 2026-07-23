@@ -635,6 +635,23 @@ class ManagerApp:
         self.health_probe_timeout_var = ttk.StringVar(value=str(self.config.get("health_probe_timeout", 2)))
         ttk.Spinbox(probe_frame, from_=1, to=30, textvariable=self.health_probe_timeout_var, width=5).pack(side=LEFT)
 
+        idle_frame = ttk.Frame(adv_frame)
+        idle_frame.pack(fill=X, pady=(0, 5))
+        ttk.Label(idle_frame, text="模型閒置卸載 (分鐘):", width=20).pack(side=LEFT)
+        self.model_idle_timeout_var = ttk.StringVar(
+            value=str(self.config.get("model_idle_timeout_minutes", 5))
+        )
+        ttk.Spinbox(
+            idle_frame,
+            from_=1,
+            to=1440,
+            textvariable=self.model_idle_timeout_var,
+            width=5,
+        ).pack(side=LEFT)
+        ttk.Label(idle_frame, text="（ASR 除外，重啟 Backend 後生效）").pack(
+            side=LEFT, padx=(8, 0)
+        )
+
         # 儲存按鈕
         ttk.Button(
             inner, text="💾 儲存設定", bootstyle="primary",
@@ -1208,6 +1225,12 @@ class ManagerApp:
             pass
         try:
             self.config["health_probe_timeout"] = int(self.health_probe_timeout_var.get())
+        except ValueError:
+            pass
+        try:
+            self.config["model_idle_timeout_minutes"] = int(
+                self.model_idle_timeout_var.get()
+            )
         except ValueError:
             pass
 

@@ -10,6 +10,7 @@ official ``glmocr`` PyPI package instead of a vendored source-tree copy.
 from __future__ import annotations
 
 import base64
+import gc
 import io
 import json
 import os
@@ -17,11 +18,13 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Generator, Iterable, Iterator, List, Optional, Tuple
 
 from PIL import Image
 
+from backend.model_lifecycle import model_idle_manager
 from backend.ocr_providers import (
     DEFAULT_MODEL,
     GenerationOptions,
@@ -345,6 +348,84 @@ class _WholePageLayoutDetector:
         return pages, {}
 
 
+class _IdleLayoutDetector:
+    """Keep PP-DocLayout loaded across pipeline instances until it is idle."""
+
+    def __init__(self, config: Any):
+        self._config = config
+        self._detector = None
+        self._lock = threading.RLock()
+
+    @property
+    def batch_size(self) -> int:
+        with self._lock:
+            if self._detector is not None:
+                return int(self._detector.batch_size)
+            return int(getattr(self._config, "batch_size", 1))
+
+    def start(self) -> None:
+        loaded_now = False
+        with self._lock:
+            if self._detector is None:
+                from glmocr.layout.layout_detector import PPDocLayoutDetector
+
+                self._detector = PPDocLayoutDetector(self._config)
+                self._detector.start()
+                loaded_now = True
+        if loaded_now:
+            model_idle_manager.mark_loaded("layout")
+
+    def stop(self) -> None:
+        # Pipeline.stop() runs after every page. The idle manager owns the real
+        # shutdown so consecutive pages and tasks reuse the same weights.
+        return None
+
+    def process(self, *args: Any, **kwargs: Any):
+        with self._lock:
+            if self._detector is None:
+                raise RuntimeError("PP-DocLayout detector has not been started")
+            return self._detector.process(*args, **kwargs)
+
+    def force_unload(self) -> bool:
+        with self._lock:
+            detector = self._detector
+            self._detector = None
+            if detector is None:
+                return False
+            detector.stop()
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        return True
+
+
+_document_pipeline_lock = threading.RLock()
+_layout_detector_lock = threading.RLock()
+_layout_detector: Optional[_IdleLayoutDetector] = None
+
+
+def _get_layout_detector(config: Any) -> _IdleLayoutDetector:
+    global _layout_detector
+    with _layout_detector_lock:
+        if _layout_detector is None:
+            _layout_detector = _IdleLayoutDetector(config)
+        return _layout_detector
+
+
+def _unload_layout_model() -> bool:
+    with _layout_detector_lock:
+        detector = _layout_detector
+    return detector.force_unload() if detector is not None else False
+
+
+model_idle_manager.register("layout", _unload_layout_model)
+
+
 def _run_document_pipeline(
     image: Image.Image,
     provider: OCRProvider,
@@ -363,51 +444,57 @@ def _run_document_pipeline(
             "完整文件解析需要官方 glmocr 套件；請安裝 requirements-ocr.txt。"
         ) from exc
 
+    lifecycle = model_idle_manager.activity("layout") if enable_layout else nullcontext()
     try:
-        config_model = load_config(
-            mode="selfhosted",
-            model=options.model,
-            timeout=options.timeout,
-            layout_device=os.getenv("GLMOCR_LAYOUT_DEVICE") or None,
-        )
-        pipeline_config = config_model.pipeline
-        # glmocr <=0.1.1 exposed ``enable_layout``; 0.1.5 always runs the
-        # layout stage and accepts a custom detector instead.
-        if hasattr(pipeline_config, "enable_layout"):
-            pipeline_config.enable_layout = enable_layout
-        if hasattr(pipeline_config, "max_workers"):
-            pipeline_config.max_workers = (
-                1
-                if provider.name == "local"
-                else max(1, int(os.getenv("OCR_MAX_WORKERS", "8")))
+        with _document_pipeline_lock, lifecycle:
+            config_model = load_config(
+                mode="selfhosted",
+                model=options.model,
+                timeout=options.timeout,
+                layout_device=os.getenv("GLMOCR_LAYOUT_DEVICE") or None,
             )
-        if hasattr(pipeline_config, "result_formatter"):
-            pipeline_config.result_formatter.output_format = output_format
+            pipeline_config = config_model.pipeline
+            # glmocr <=0.1.1 exposed ``enable_layout``; 0.1.5 always runs the
+            # layout stage and accepts a custom detector instead.
+            if hasattr(pipeline_config, "enable_layout"):
+                pipeline_config.enable_layout = enable_layout
+            if hasattr(pipeline_config, "max_workers"):
+                pipeline_config.max_workers = (
+                    1
+                    if provider.name == "local"
+                    else max(1, int(os.getenv("OCR_MAX_WORKERS", "8")))
+                )
+            if hasattr(pipeline_config, "result_formatter"):
+                pipeline_config.result_formatter.output_format = output_format
 
-        layout_detector = None if enable_layout else _WholePageLayoutDetector()
-        pipeline = Pipeline(config=pipeline_config, layout_detector=layout_detector)
-        pipeline.ocr_client = InProcessSDKClient(provider, options)
-        pipeline.start()
-        try:
-            request_data = {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": TASK_PROMPTS["text"]},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{_pil_to_base64(image)}"
+            layout_detector = (
+                _get_layout_detector(pipeline_config.layout)
+                if enable_layout
+                else _WholePageLayoutDetector()
+            )
+            pipeline = Pipeline(config=pipeline_config, layout_detector=layout_detector)
+            pipeline.ocr_client = InProcessSDKClient(provider, options)
+            pipeline.start()
+            try:
+                request_data = {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": TASK_PROMPTS["text"]},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{_pil_to_base64(image)}"
+                                    },
                                 },
-                            },
-                        ],
-                    }
-                ]
-            }
-            parsed_results = list(pipeline.process(request_data))
-        finally:
-            pipeline.stop()
+                            ],
+                        }
+                    ]
+                }
+                parsed_results = list(pipeline.process(request_data))
+            finally:
+                pipeline.stop()
     except OCRProviderError:
         raise
     except Exception as exc:
@@ -422,6 +509,14 @@ def _run_document_pipeline(
         raise OCRProviderError("GLM-OCR 文件管線沒有產生結果")
     result = parsed_results[0]
     return _normalize_sdk_json(result.json_result), result.markdown_result or ""
+
+
+def unload_ocr_resources() -> bool:
+    """Synchronously release both GLM-OCR and PP-DocLayout resources."""
+
+    ocr_unloaded = model_idle_manager.unload_now("ocr")
+    layout_unloaded = model_idle_manager.unload_now("layout")
+    return ocr_unloaded or layout_unloaded
 
 
 def recognize_image(
@@ -728,5 +823,6 @@ __all__ = [
     "process_file_stream",
     "recognize_image",
     "unload_ocr_models",
+    "unload_ocr_resources",
     "update_correction_map",
 ]

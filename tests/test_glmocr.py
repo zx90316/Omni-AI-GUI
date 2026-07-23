@@ -41,6 +41,29 @@ class FakeProvider(OCRProvider):
 
 
 class OCRTests(unittest.TestCase):
+    def test_idle_layout_detector_stop_defers_real_unload(self):
+        calls = []
+
+        class FakeDetector:
+            batch_size = 2
+
+            def start(self):
+                calls.append("start")
+
+            def stop(self):
+                calls.append("stop")
+
+            def process(self, images, **kwargs):
+                return images, kwargs
+
+        detector = engine._IdleLayoutDetector(types.SimpleNamespace(batch_size=2))
+        detector._detector = FakeDetector()
+        detector.stop()
+        self.assertEqual(calls, [])
+        self.assertTrue(detector.force_unload())
+        self.assertEqual(calls, ["stop"])
+        self.assertFalse(detector.force_unload())
+
     def test_transformers_provider_uses_official_image_text_flow(self):
         observed = {}
 

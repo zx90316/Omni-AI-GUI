@@ -6,10 +6,12 @@ CLIP 以圖搜頁引擎 — 使用 openai/clip-vit-large-patch14 比對 PDF 頁�
 import base64
 import gc
 import io
+import threading
 from typing import Any, Dict, Generator, List
 
 import torch
 
+from backend.model_lifecycle import model_idle_manager
 from backend.model_registry import MODEL_IDS
 
 from backend.ocr_engine import _call_glm_ocr, pdf_pages_to_images, _pil_to_base64
@@ -28,64 +30,86 @@ except ImportError:
 _clip_model = None
 _clip_processor = None
 _device = None
+_clip_lock = threading.RLock()
+_clip_inference_lock = threading.RLock()
 
 
 def load_clip_model():
     """懶載入 CLIP 模型 (singleton)，含離線保護"""
     global _clip_model, _clip_processor, _device
 
-    if _clip_model is not None:
+    with _clip_lock:
+        if _clip_model is not None:
+            return _clip_model, _clip_processor
+
+        from transformers import CLIPModel, CLIPProcessor
+        from backend.network_utils import is_model_cached, make_offline_error_message
+
+        model_name = MODEL_IDS["clip"]
+
+        if not is_model_cached(model_name):
+            raise RuntimeError(make_offline_error_message(model_name))
+
+        print(f"[CLIP] 正在載入模型 {model_name} ...")
+
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            model = CLIPModel.from_pretrained(
+                model_name, local_files_only=True
+            ).to(_device)
+            model.eval()
+            processor = CLIPProcessor.from_pretrained(
+                model_name, local_files_only=True
+            )
+        except Exception as e:
+            _clip_model = None
+            _clip_processor = None
+            _device = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            err_str = str(e).lower()
+            if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):
+                raise RuntimeError(make_offline_error_message(model_name)) from e
+            raise
+
+        _clip_model = model
+        _clip_processor = processor
+        model_idle_manager.mark_loaded("clip")
+        print(f"[CLIP] 模型已載入至 {_device}")
         return _clip_model, _clip_processor
-
-    from transformers import CLIPModel, CLIPProcessor
-    from backend.network_utils import is_model_cached, make_offline_error_message
-
-    model_name = MODEL_IDS["clip"]
-
-    if not is_model_cached(model_name):
-        raise RuntimeError(make_offline_error_message(model_name))
-
-    print(f"[CLIP] 正在載入模型 {model_name} ...")
-
-    _device = "cuda" if torch.cuda.is_available() else "cpu"
-    try:
-        _clip_model = CLIPModel.from_pretrained(
-            model_name, local_files_only=True
-        ).to(_device)
-        _clip_model.eval()
-        _clip_processor = CLIPProcessor.from_pretrained(
-            model_name, local_files_only=True
-        )
-    except (OSError, ConnectionError, Exception) as e:
-        err_str = str(e).lower()
-        if any(kw in err_str for kw in ["connection", "proxy", "timeout", "resolve", "offline"]):
-            raise RuntimeError(make_offline_error_message(model_name)) from e
-        raise
-
-    print(f"[CLIP] 模型已載入至 {_device}")
-    return _clip_model, _clip_processor
 
 
 def unload_clip_model():
     """釋放 CLIP 模型，回收 VRAM"""
     global _clip_model, _clip_processor, _device
 
-    if _clip_model is not None:
-        del _clip_model
+    with _clip_lock:
+        had_model = _clip_model is not None or _clip_processor is not None
         _clip_model = None
-    if _clip_processor is not None:
-        del _clip_processor
         _clip_processor = None
-    _device = None
+        _device = None
 
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print("[CLIP] 模型已卸載，VRAM 已釋放")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if had_model:
+            print("[CLIP] 模型已卸載，VRAM 已釋放")
+        return had_model
+
+
+model_idle_manager.register("clip", unload_clip_model)
 
 # ── 核心比對 ──
 
 def extract_image_feature(image_bytes: bytes) -> tuple[list[float], int]:
+    """Extract one feature vector and keep CLIP alive until its idle timeout."""
+
+    with model_idle_manager.activity("clip"), _clip_inference_lock:
+        return _extract_image_feature(image_bytes)
+
+
+def _extract_image_feature(image_bytes: bytes) -> tuple[list[float], int]:
     """
     自給定圖片提取 CLIP 特徵向量。
     向量會作 L2 正規化，以供餘弦相似度直接運算。
@@ -114,13 +138,33 @@ def extract_image_feature(image_bytes: bytes) -> tuple[list[float], int]:
         
     vector = features.cpu().numpy().flatten().tolist()
     
-    # 執行完畢釋放記憶體 (可選，但為了保留原先 `clip_engine` 隨用隨清的風格，這裡我們也執行 unload)
-    # 如果系統需要高頻呼叫 API，您也可以把這行改成由 client 決定是否 unload
-    unload_clip_model()
-    
     return vector, len(vector)
 
+
 def search_similar_pages(
+    pdf_bytes: bytes,
+    ref_images_bytes: List[bytes],
+    must_include: str = "",
+    must_exclude: str = "",
+    threshold: float = 0.5,
+    top_k: int = 5,
+    dpi: int = 150,
+) -> Generator[Dict[str, Any], None, None]:
+    """Search pages while preventing idle unload, including early generator close."""
+
+    with model_idle_manager.activity("clip"), _clip_inference_lock:
+        yield from _search_similar_pages(
+            pdf_bytes=pdf_bytes,
+            ref_images_bytes=ref_images_bytes,
+            must_include=must_include,
+            must_exclude=must_exclude,
+            threshold=threshold,
+            top_k=top_k,
+            dpi=dpi,
+        )
+
+
+def _search_similar_pages(
     pdf_bytes: bytes,
     ref_images_bytes: List[bytes],
     must_include: str = "",
@@ -214,9 +258,6 @@ def search_similar_pages(
     # 排序並取候選 top M
     page_scores.sort(key=lambda x: x["similarity"], reverse=True)
     candidates = page_scores[:candidate_k]
-
-    # 卸載 CLIP 模型以挪出 VRAM 供 OCR 使用
-    unload_clip_model()
 
     # 6. OCR 文字過濾 (若有 must_include / must_exclude)
     final_results = []
