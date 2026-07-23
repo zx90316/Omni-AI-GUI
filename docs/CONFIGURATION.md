@@ -1,4 +1,4 @@
-# 設定參考
+﻿# 設定參考
 
 設定分兩層：`.env` 控制 Backend、模型與驗證 Secret；`manager_config.json` 控制桌面 Manager 與服務監督。修改後通常需重啟相關服務。
 
@@ -22,11 +22,11 @@
 | `ASR_MAX_UPLOAD_MB` | `2048` | ASR 上傳上限 MiB，範圍 1–102400 |
 | `ASR_TASK_TIMEOUT_SECONDS` | `14400` | 排隊加執行 timeout，最少 60 秒 |
 | `SECRET_KEY` | 無安全預設 | JWT HS256 key；至少 32 字元、每部署唯一 |
-| `SMTP_HOST` | `smtp.gmail.com` | Email OTP SMTP host |
-| `SMTP_PORT` | `465` | 465 使用 SSL；587 使用 STARTTLS |
-| `SMTP_USER` | 無 | SMTP 登入帳號 |
-| `SMTP_PASSWORD` | 無 | 應用程式密碼／專用憑證 |
-| `SMTP_FROM_EMAIL` | 無 | OTP 寄件者地址 |
+| `SMTP_HOST` | `smtp.gmail.com` | Email OTP SMTP host（Gmail／企業／自建皆可） |
+| `SMTP_PORT` | `465` | 465=SSL；587／2525 等用 STARTTLS；允許 1–65535 |
+| `SMTP_USER` | 無 | 選填；信箱或純使用者名稱；開放 relay 可留空 |
+| `SMTP_PASSWORD` | 無 | 選填；不需驗證時可留空 |
+| `SMTP_FROM_EMAIL` | 無 | OTP 寄件者地址（必填） |
 
 Manager 會拒絕缺少必要值、placeholder Secret、錯誤 Email、超出範圍的數值，以及 provider 相依欄位不完整的設定。`OCR_API_KEY`、`HF_TOKEN` 與 SMTP 密碼屬 Secret，不要貼入 Issue 或 log。
 

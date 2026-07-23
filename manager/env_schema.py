@@ -124,28 +124,28 @@ ENV_FIELDS = (
     ),
     EnvField(
         "SMTP_HOST", "SMTP 主機", "認證與郵件",
-        "寄送登入驗證碼的 SMTP 伺服器。",
-        required=True, default="smtp.gmail.com", example="smtp.gmail.com",
+        "寄送登入驗證碼的 SMTP 伺服器（Gmail、企業或自建皆可）。",
+        required=True, default="smtp.gmail.com", example="mail.example.com",
     ),
     EnvField(
         "SMTP_PORT", "SMTP Port", "認證與郵件",
-        "Gmail SSL 通常使用 465，STARTTLS 通常使用 587。",
-        required=True, default="465", example="465",
-        choices=("465", "587"),
+        "465 使用 SSL；587／其他埠通常用 STARTTLS；25 為傳統明文／relay。允許 1–65535。",
+        required=True, default="465", example="587",
+        choices=("25", "465", "587", "2525"), editable_choices=True,
     ),
     EnvField(
         "SMTP_USER", "SMTP 帳號", "認證與郵件",
-        "寄件服務登入帳號。",
-        required=True, example="your-email@gmail.com",
+        "登入帳號；可為信箱或純使用者名稱。開放 relay／IP 驗證時可留空。",
+        example="smtp-user",
     ),
     EnvField(
         "SMTP_PASSWORD", "SMTP 密碼", "認證與郵件",
-        "Gmail 請使用應用程式密碼，不要使用一般登入密碼。",
-        required=True, example="xxxx xxxx xxxx xxxx", secret=True,
+        "登入密碼或應用程式密碼。不需驗證時可留空。",
+        example="your-smtp-password", secret=True,
     ),
     EnvField(
         "SMTP_FROM_EMAIL", "寄件者信箱", "認證與郵件",
-        "驗證信顯示的寄件者；通常與 SMTP 帳號相同。",
+        "驗證信顯示的寄件者；可與 SMTP 帳號不同。",
         required=True, example="noreply@example.com",
     ),
 )
@@ -225,13 +225,14 @@ def validate_env_values(values: Mapping[str, object]) -> EnvValidationResult:
     ):
         errors.append("SECRET_KEY 必須是至少 32 字元且不可使用範例值")
 
-    for key in ("SMTP_USER", "SMTP_FROM_EMAIL"):
-        value = cleaned.get(key, "")
-        if value and (
-            value.lower() in _PLACEHOLDER_VALUES
-            or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is None
-        ):
-            errors.append(f"{key} 必須是有效且非範例的電子郵件地址")
+    smtp_from = cleaned.get("SMTP_FROM_EMAIL", "")
+    if smtp_from and (
+        smtp_from.lower() in _PLACEHOLDER_VALUES
+        or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", smtp_from) is None
+    ):
+        errors.append("SMTP_FROM_EMAIL 必須是有效且非範例的電子郵件地址")
+    if cleaned.get("SMTP_USER", "").lower() in _PLACEHOLDER_VALUES:
+        errors.append("SMTP_USER 不可使用範例值")
     if cleaned.get("SMTP_PASSWORD", "").lower() in _PLACEHOLDER_VALUES:
         errors.append("SMTP_PASSWORD 不可使用範例值")
 

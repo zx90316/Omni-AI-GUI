@@ -1,4 +1,4 @@
-"""Fast lifecycle tests for Manager configuration and process supervision."""
+﻿"""Fast lifecycle tests for Manager configuration and process supervision."""
 from pathlib import Path
 import socket
 import subprocess
@@ -97,8 +97,20 @@ class EnvConfigurationTests(unittest.TestCase):
     def test_missing_personal_values_block_startup(self):
         result = validate_env_values(initial_env_values({}))
         self.assertFalse(result.valid)
-        self.assertIn("SMTP_USER", result.missing_keys)
-        self.assertIn("SMTP_PASSWORD", result.missing_keys)
+        self.assertIn("SMTP_FROM_EMAIL", result.missing_keys)
+
+    def test_self_hosted_smtp_allows_custom_port_and_optional_auth(self):
+        values = initial_env_values(
+            {
+                "SMTP_HOST": "mail.internal.example",
+                "SMTP_PORT": "2525",
+                "SMTP_USER": "relay",
+                "SMTP_PASSWORD": "",
+                "SMTP_FROM_EMAIL": "noreply@example.com",
+            }
+        )
+        result = validate_env_values(values)
+        self.assertTrue(result.valid, result.errors)
 
     def test_openai_ocr_requires_api_url(self):
         values = initial_env_values(
