@@ -106,6 +106,7 @@ class EnvConfigurationTests(unittest.TestCase):
             {
                 "SMTP_HOST": "mail.internal.example",
                 "SMTP_PORT": "2525",
+                "SMTP_SECURITY": "starttls",
                 "SMTP_USER": "relay",
                 "SMTP_PASSWORD": "",
                 "SMTP_FROM_EMAIL": "noreply@example.com",
@@ -113,6 +114,18 @@ class EnvConfigurationTests(unittest.TestCase):
         )
         result = validate_env_values(values)
         self.assertTrue(result.valid, result.errors)
+
+    def test_smtp_security_rejects_unknown_mode(self):
+        values = initial_env_values(
+            {
+                "SMTP_USER": "owner@example.com",
+                "SMTP_PASSWORD": "application-password",
+                "SMTP_SECURITY": "tls",
+            }
+        )
+        result = validate_env_values(values)
+        self.assertFalse(result.valid)
+        self.assertTrue(any("SMTP_SECURITY" in err for err in result.errors))
 
     def test_openai_ocr_requires_api_url(self):
         values = initial_env_values(

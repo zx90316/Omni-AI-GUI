@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Schema, defaults and validation for the project ``.env`` file."""
 
 from __future__ import annotations
@@ -129,9 +129,17 @@ ENV_FIELDS = (
     ),
     EnvField(
         "SMTP_PORT", "SMTP Port", "認證與郵件",
-        "465 使用 SSL；587／其他埠通常用 STARTTLS；25 為傳統明文／relay。允許 1–65535。",
+        "SMTP 服務埠；加密方式請看 SMTP_SECURITY。允許 1–65535。",
         required=True, default="465", example="587",
         choices=("25", "465", "587", "2525"), editable_choices=True,
+    ),
+    EnvField(
+        "SMTP_SECURITY", "SMTP 加密", "認證與郵件",
+        "ssl=連線即 TLS（常見於 465）；starttls=先明文再升級（常見於 587）；"
+        "none=明文；auto 依埠猜測（465→ssl、25→none、其餘→starttls）。"
+        "自建若出現 WRONG_VERSION_NUMBER，請改 starttls 或 none。",
+        required=True, default="auto", example="starttls",
+        choices=("auto", "ssl", "starttls", "none"),
     ),
     EnvField(
         "SMTP_USER", "SMTP 帳號", "認證與郵件",

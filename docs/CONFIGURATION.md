@@ -23,7 +23,8 @@
 | `ASR_TASK_TIMEOUT_SECONDS` | `14400` | 排隊加執行 timeout，最少 60 秒 |
 | `SECRET_KEY` | 無安全預設 | JWT HS256 key；至少 32 字元、每部署唯一 |
 | `SMTP_HOST` | `smtp.gmail.com` | Email OTP SMTP host（Gmail／企業／自建皆可） |
-| `SMTP_PORT` | `465` | 465=SSL；587／2525 等用 STARTTLS；允許 1–65535 |
+| `SMTP_PORT` | `465` | SMTP 埠；允許 1–65535 |
+| `SMTP_SECURITY` | `auto` | `ssl`／`starttls`／`none`；`auto` 依埠猜測（465→ssl、25→none、其餘→starttls） |
 | `SMTP_USER` | 無 | 選填；信箱或純使用者名稱；開放 relay 可留空 |
 | `SMTP_PASSWORD` | 無 | 選填；不需驗證時可留空 |
 | `SMTP_FROM_EMAIL` | 無 | OTP 寄件者地址（必填） |
