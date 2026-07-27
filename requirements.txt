@@ -1,15 +1,15 @@
 # PyTorch（Manager 會依偵測結果替換 CUDA/CPU index）
 # CPU 版本請改用: --extra-index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.10.0
-torchvision==0.25.0
-torchaudio==2.10.0
+torch==2.13.0
+torchvision==0.28.0
+torchaudio==2.11.0+cu128
 
 # Qwen3-ASR HF-native 與 GLM-OCR 共用 Transformers 5.x。
 transformers @ git+https://github.com/huggingface/transformers.git
 huggingface_hub
 accelerate>=1.12.0
-nagisa==0.2.11
+nagisa==0.3.0
 soynlp==0.0.493
 
 # 語者分離
